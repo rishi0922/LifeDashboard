@@ -1,0 +1,85 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  points        Int       @default(0)
+  tier          String    @default("Bronze")
+  streak        Int       @default(0)
+  tasks         Task[]
+  notes         Note[]
+  foodOrders    FoodOrder[]
+  preferences   UserPreference[]
+}
+
+model Task {
+  id            String   @id @default(cuid())
+  title         String
+  description   String?
+  category      String   @default("Work")
+  status        String   @default("TODO")
+  isAiGenerated Boolean  @default(false)
+  externalId    String?  @unique
+  deadline      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model FoodOrder {
+  id          String   @id @default(cuid())
+  restaurant  String
+  items       String
+  cost        Float
+  status      String   @default("Preparing") // Preparing, On the Way, Delivered
+  etaMinutes  Int?
+  externalId  String?  @unique
+  source      String   @default("Local")      // Local, Zomato
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model UserPreference {
+  id        String   @id @default(cuid())
+  key       String   // e.g. "favorite_cuisine"
+  value     String   // e.g. "Italian"
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  amount      Float
+  merchant    String
+  category    String   // Food, Travel, Bills, Shopping
+  date        DateTime @default(now())
+  sourceId    String?  @unique
+  sourceType  String?   // GMAIL
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

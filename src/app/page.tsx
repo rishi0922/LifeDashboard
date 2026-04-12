@@ -1,66 +1,61 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { GamificationBar } from "./components/GamificationBar";
+import { DashboardGrid } from "./components/DashboardGrid";
+import { AIChatAssistant } from "./components/AIChatAssistant";
+import { DashboardHeader } from "./components/DashboardHeader";
+import { FinanceGrid } from "./components/FinanceGrid";
+import { InboxScout } from "./components/InboxScout";
+
+export default function DashboardPage() {
+  const [activeTab, setActiveTab] = useState(0); // 0: Command Center, 1: Finance
+  const totalTabs = 2;
+
+  const nextTab = () => setActiveTab((prev) => (prev + 1) % totalTabs);
+  const prevTab = () => setActiveTab((prev) => (prev - 1 + totalTabs) % totalTabs);
+
+  const tabTitles = ["Chief Command", "Finance Intelligence"];
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen" style={{ background: 'var(--bg-primary)', paddingBottom: '5rem' }}>
+      <GamificationBar />
+      
+      <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '0 3rem' }}>
+        {/* Persistent Global Header */}
+        <div style={{ marginBottom: '0.75rem' }}>
+          <DashboardHeader />
+          <InboxScout />
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Tab Switcher (Compacted) */}
+        <div className="animate-fade-in" style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          marginBottom: '1.25rem',
+          padding: '0.4rem 1.5rem',
+          background: 'var(--bg-secondary)',
+          borderRadius: 'var(--radius-xl)',
+          border: '1px solid var(--border-color)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.03)'
+        }}>
+          <button onClick={prevTab} className="btn-icon" style={{ fontSize: '1.25rem', fontWeight: 900, background: 'transparent' }}>‹</button>
+          
+          <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+            {tabTitles[activeTab]}
+          </span>
+
+          <button onClick={nextTab} className="btn-icon" style={{ fontSize: '1.25rem', fontWeight: 900, background: 'transparent' }}>›</button>
         </div>
-      </main>
-    </div>
+
+        {/* Dynamic Content */}
+        <div key={activeTab} className="animate-slide-in">
+          {activeTab === 0 ? <DashboardGrid /> : <FinanceGrid />}
+        </div>
+      </div>
+      
+      <AIChatAssistant />
+    </main>
   );
 }

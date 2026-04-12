@@ -1,3 +1,14 @@
+# Project Roadmap & Future Intelligence
+
+## 🚀 Upcoming Capabilities
+### Universal MCP Bridge (Planned)
+- **Local Mirroring**: Auto-discovery of Claude Desktop MCP configurations (`%APPDATA%/Claude/claude_desktop_config.json`).
+- **Cloud Sync Portal**: UI for uploading and persisting MCP configs to the database for GitHub/Vercel deployments.
+- **Dynamic Toolkit**: AI Assistant dynamically fetches available tools from the unified MCP bridge.
+
+---
+
+# Next.js Agent Rules
 <!-- BEGIN:nextjs-agent-rules -->
 # This is NOT the Next.js you know
 

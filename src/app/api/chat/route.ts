@@ -1,0 +1,249 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getRobustModel } from "@/lib/gemini";
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { fetchGmailSnippets } from "@/lib/gmail";
+import { ZomatoBridge } from "@/lib/zomato";
+
+export const dynamic = "force-dynamic";
+
+export async function POST(req: Request) {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not configured in .env");
+    }
+
+    const session = await getServerSession(authOptions);
+    //@ts-ignore
+    const accessToken = session?.accessToken;
+    
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const { messages } = await req.json();
+    const latestMessage = messages[messages.length - 1]?.content;
+
+    // 1. Fetch Context (Optimized)
+    const istNow = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+    const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    
+    let calendarContext = "No live calendar context available.";
+    if (accessToken) {
+      try {
+        const startOfDay = new Date(istDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(istDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        // Correct range calculation for IST
+        const getISTString = (d: Date, time: string) => {
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}T${time}+05:30`;
+        };
+
+        const timeMin = encodeURIComponent(getISTString(startOfDay, "00:00:00"));
+        const timeMax = encodeURIComponent(getISTString(endOfDay, "23:59:59"));
+
+        const calRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&orderBy=startTime`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (calRes.ok) {
+          const data = await calRes.json();
+          calendarContext = `Today's Events (IST):\n${data.items?.map((ev: any) => `- ${ev.summary} at ${ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'}) : 'All Day'}`).join('\n') || "No events today."}`;
+        }
+      } catch (err) { console.error("Cal context error", err); }
+    }
+
+    let taskContext = "No active tasks.";
+    try {
+      const activeUser = await prisma.user.findFirst();
+      if (activeUser) {
+        const tasks = await prisma.task.findMany({ where: { userId: activeUser.id, status: 'TODO' }, take: 20 });
+        taskContext = tasks.length > 0 ? `ACTIVE TASKS:\n${tasks.map((t: any) => `- [ID: ${t.id}] ${t.title}`).join('\n')}` : "All tasks done!";
+      }
+    } catch (err) { console.error("Task context error", err); }
+
+    let gmailContext = "Gmail scan available! Ask me to 'check mail' or 'scan inbox' to see unread updates.";
+    const hasGmailIntent = ["email", "inbox", "gmail", "mail", "scan"].some(k => latestMessage.toLowerCase().includes(k));
+    if (accessToken && hasGmailIntent) {
+      try {
+        const emails = await fetchGmailSnippets(accessToken);
+        if (emails && emails.length > 0) {
+          gmailContext = `RECENT UNREAD EMAILS:\n${emails.map((e: any) => `- From: ${e.from} | Subject: ${e.subject} | Snippet: ${e.snippet}`).join('\n')}`;
+        } else { gmailContext = "Inbox is clean!"; }
+      } catch (err) { console.error("Gmail context error", err); }
+    }
+
+    // 2. System Prompt
+    const prompt = `
+      You are "Command Center AI". Respond clearly and concisely.
+      
+      CORE SETTINGS:
+      - TIMEZONE: Indian Standard Time (IST, UTC+5:30)
+      - REFERENCE NOW: ${istNow}
+      - CURRENT DATE: ${istDate.toDateString()}
+      
+      IMPORTANT:
+      - All relative times like "today", "tonight", "7 PM" must be calculated using the IST reference provided above.
+      - When generating "startTime" or "endTime" for calendar actions, DO NOT use UTC. Use local IST time.
+      
+      CONTEXT:
+      - CALENDAR: ${calendarContext}
+      - TASKS: ${taskContext}
+      - GMAIL: ${gmailContext}
+      - HISTORY: Below is the recent interaction history of this session. Use it for context.
+      ${JSON.stringify(messages.slice(0, -1))}
+      
+      CAPABILITIES (Output JSON for actions):
+      - Create Event: {"action": "create_event", "summary": "Title", "startTime": "YYYY-MM-DDTHH:mm:ss", "endTime": "YYYY-MM-DDTHH:mm:ss"}
+      - Update/Delete Event: {"action": "update_event", "eventId": "ID"}, {"action": "delete_event", "eventId": "ID"}
+      - Create Task: {"action": "create_task", "title": "...", "category": "Work" | "Personal" | "Urgent", "sourceId": "GMAIL_MSG_ID_IF_APPLICABLE"}
+      - Update/Delete Task: {"action": "update_task", "taskId": "ID", "status": "DONE"}, {"action": "delete_task", "taskId": "ID"}
+      - Food Order: {"action": "create_food_order", "restaurant": "...", "items": "...", "cost": 0.0, "etaMinutes": 25}
+      - Save Preference: {"action": "save_preference", "key": "...", "value": "..."}
+      --- GMAIL INTELLIGENCE ---
+      ${gmailContext}
+      If the user asks to "Scan my inbox" or mentions "email/mail":
+      1. The snippets above ARE the latest unread emails. DO NOT ask for permission to scan; analyze them immediately.
+      2. Identify actionable tasks (e.g., deadlines, invoices, meeting requests).
+      3. For each actionable item, ASK the user if they want to add it as a task. IMPORTANT: Always include the Gmail Message ID as "sourceId" for deduplication.
+      --- TASK CATEGORIZATION ---
+      - Use "Personal" for: Shopping (Amazon, etc.), Family, Home, Health, Hobbies.
+      - Use "Work" for: Office, Proejcts, Clients, Meetings.
+      - Use "Urgent" for: Immediate deadlines, emergencies.
+
+      --- ZOMATO INTELLIGENCE (HYPER-LOCAL) ---
+      - STATUS: You are connected to a Zomato MCP Bridge.
+      - CAPABILITIES: 
+        1. {"action": "zomato_search", "preference": "Fastest" | "Best Value", "cuisine": "..."} -> Finds top matches using historical boosting.
+        2. {"action": "zomato_prepare_cart", "restaurant": "...", "items": [...]} -> Drafts a cart (Human-in-the-loop).
+        3. {"action": "zomato_track", "orderId": "..."} -> Force-syncs a specific order.
+      - PROACTIVITY: If the current time is between 10:00 PM and 02:00 AM, and the user is active, politely check if they want a late-night snack suggested from their Favorite Restaurants.
+      
+      User: ${latestMessage}
+    `;
+
+    // 3. Resilience Hub (Robust SDK Utility)
+    const model = await getRobustModel(genAI);
+    const result = await model.generateContent(prompt);
+
+    if (!result) {
+      throw new Error("All AI models failed to generate content.");
+    }
+
+    let text = result.response.text();
+    let calendarMutated = false;
+    let tasksMutated = false;
+
+    // 4. Action Interception
+    const actionRegex = /\{[\s\S]*?"action":[\s\S]*?\}/g;
+    const actionBlocks = text.match(actionRegex) || [];
+    
+    if (actionBlocks.length > 0) {
+      const executionMessages: string[] = [];
+      
+      // Helper for IST Offset injection
+      const formatTime = (iso: string) => {
+        if (!iso) return new Date().toISOString();
+        if (iso.includes('+') || iso.endsWith('Z')) return iso;
+        return `${iso}+05:30`; // Force IST offset
+      };
+
+      for (const jsonStr of actionBlocks) {
+        try {
+          const cmd = JSON.parse(jsonStr);
+          
+          if (cmd.action === "zomato_search") {
+             const userObj = await prisma.user.upsert({
+               where: { email: userEmail },
+               update: {},
+               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+             });
+             const suggestion = await ZomatoBridge.suggestBestOption(userObj.id, cmd.preference || "Best Value");
+             executionMessages.push(`🔍 Zomato Scout found: **${suggestion.name}** (${suggestion.eta}m, ⭐${suggestion.rating}). Should I prepare a cart?`);
+          } else if (cmd.action === "zomato_prepare_cart") {
+             await ZomatoBridge.addToCart(cmd.restaurant, cmd.items);
+             executionMessages.push(`🛒 Cart drafted at **${cmd.restaurant}** with: ${cmd.items.join(", ")}. Follow the link in the Food panel to checkout!`);
+          } else if (cmd.action.includes("event") && accessToken) {
+             // 1. Calendar Conflict Check
+             const timeMin = encodeURIComponent(formatTime(cmd.startTime));
+             const timeMax = encodeURIComponent(formatTime(cmd.endTime || cmd.startTime));
+             const conflictsRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&q=${encodeURIComponent(cmd.summary)}`, {
+               headers: { "Authorization": `Bearer ${accessToken}` }
+             });
+             
+             if (conflictsRes.ok) {
+               const conflicts = await conflictsRes.json();
+               if (conflicts.items && conflicts.items.length > 0) {
+                 executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists at this time.`);
+                 continue; 
+               }
+             }
+
+             const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events" + (cmd.action !== "create_event" ? `/${cmd.eventId}` : ""), {
+               method: cmd.action === "create_event" ? "POST" : (cmd.action === "update_event" ? "PATCH" : "DELETE"),
+               headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
+               body: cmd.action !== "delete_event" ? JSON.stringify({ 
+                 summary: cmd.summary, 
+                 start: { dateTime: formatTime(cmd.startTime), timeZone: "Asia/Kolkata" }, 
+                 end: { dateTime: formatTime(cmd.endTime || cmd.startTime), timeZone: "Asia/Kolkata" } 
+               }) : undefined
+             });
+             if (res.ok) { executionMessages.push(`📅 Calendar updated: ${cmd.summary || cmd.eventId}`); calendarMutated = true; }
+             else {
+               const errJson = await res.json().catch(() => ({}));
+               console.error("Google Calendar API Error:", res.status, errJson);
+               executionMessages.push(`❌ Failed to update calendar: ${errJson.error?.message || "Google API error"}`);
+             }
+          } else if (cmd.action.includes("task")) {
+             const userObj = await prisma.user.upsert({
+               where: { email: userEmail },
+               update: {},
+               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+             });
+             if (cmd.action === "create_task") {
+               if (cmd.sourceId) {
+                 const exists = await prisma.task.findUnique({ where: { sourceId: cmd.sourceId }});
+                 if (exists) {
+                   executionMessages.push(`⚠️ Task: "${cmd.title}" already exists (Synced from Gmail).`);
+                   continue;
+                 }
+               }
+               await prisma.task.create({ data: { title: cmd.title, category: cmd.category || "Work", sourceId: cmd.sourceId, sourceType: cmd.sourceId ? "GMAIL" : null, userId: userObj.id }});
+             }
+             else if (cmd.action === "update_task") await prisma.task.update({ where: { id: cmd.taskId }, data: { status: cmd.status || "DONE" }});
+             else if (cmd.action === "delete_task") await prisma.task.delete({ where: { id: cmd.taskId }});
+             executionMessages.push(`✅ Task ${cmd.action.split('_')[1]}d: ${cmd.title || cmd.taskId}`);
+             tasksMutated = true;
+          } else if (cmd.action === "create_food_order") {
+             const userObj = await prisma.user.upsert({
+               where: { email: userEmail },
+               update: {},
+               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+             });
+             //@ts-ignore
+             await prisma.foodOrder.create({ data: { restaurant: cmd.restaurant, items: cmd.items, cost: cmd.cost || 0, etaMinutes: cmd.etaMinutes || 30, userId: userObj.id }});
+             executionMessages.push(`🍕 Ordered ${cmd.items} from ${cmd.restaurant}`);
+          }
+        } catch (e) { console.error("Action execution error", e); }
+      }
+      if (executionMessages.length > 0) text = `Done! ✨\n${executionMessages.map(m => `- ${m}`).join('\n')}`;
+    }
+
+    return NextResponse.json({ 
+      role: 'assistant', 
+      content: text, 
+      calendarMutated, 
+      tasksMutated,
+      foodMutated: text.includes("🍕") || text.includes("💡")
+    });
+
+  } catch (error: any) {
+    console.error("Critical Chat API Error:", error);
+    return NextResponse.json({ error: "System Unavailable", details: error.message }, { status: 500 });
+  }
+}
