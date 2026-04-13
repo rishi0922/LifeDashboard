@@ -1,11 +1,10 @@
 generator client {
-  provider   = "prisma-client-js"
-  engineType = "binary"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -21,6 +20,7 @@ model User {
   notes         Note[]
   foodOrders    FoodOrder[]
   preferences   UserPreference[]
+  expenses      Expense[]
 }
 
 model Task {

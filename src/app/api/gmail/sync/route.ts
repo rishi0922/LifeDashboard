@@ -43,11 +43,9 @@ export async function POST() {
     // 2. Filter out already processed emails using externalId in Task
     // Note: This is an optimization to avoid sending known emails to Gemini
     const existingIds = (await prisma.task.findMany({
-      //@ts-ignore
       where: { externalId: { in: emails.map(e => e.id) } },
-      //@ts-ignore
       select: { externalId: true }
-    })).map(t => (t as any).externalId);
+    })).map(t => t.externalId);
 
     const newEmails = emails.filter(e => !existingIds.includes(e.id));
     if (newEmails.length === 0) {
@@ -93,9 +91,7 @@ export async function POST() {
             data: {
               title: action.title,
               category: action.category || "Work",
-              //@ts-ignore
               isAiGenerated: true,
-              //@ts-ignore
               externalId: action.externalId,
               userId: user.id
             }

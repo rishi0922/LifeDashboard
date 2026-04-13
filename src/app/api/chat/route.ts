@@ -19,6 +19,7 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
     //@ts-ignore
     const accessToken = session?.accessToken;
+    const userEmail = session?.user?.email || "dummy@local.dev";
     
     const genAI = new GoogleGenerativeAI(apiKey);
     const { messages } = await req.json();
@@ -161,12 +162,17 @@ export async function POST(req: Request) {
              const userObj = await prisma.user.upsert({
                where: { email: userEmail },
                update: {},
-               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+               create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
              });
              const suggestion = await ZomatoBridge.suggestBestOption(userObj.id, cmd.preference || "Best Value");
              executionMessages.push(`🔍 Zomato Scout found: **${suggestion.name}** (${suggestion.eta}m, ⭐${suggestion.rating}). Should I prepare a cart?`);
           } else if (cmd.action === "zomato_prepare_cart") {
-             await ZomatoBridge.addToCart(cmd.restaurant, cmd.items);
+             const userObj = await prisma.user.upsert({
+               where: { email: userEmail },
+               update: {},
+               create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
+             });
+             await ZomatoBridge.addToCart(userObj.id, cmd.restaurant, cmd.items);
              executionMessages.push(`🛒 Cart drafted at **${cmd.restaurant}** with: ${cmd.items.join(", ")}. Follow the link in the Food panel to checkout!`);
           } else if (cmd.action.includes("event") && accessToken) {
              // 1. Calendar Conflict Check
@@ -203,17 +209,17 @@ export async function POST(req: Request) {
              const userObj = await prisma.user.upsert({
                where: { email: userEmail },
                update: {},
-               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+               create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
              });
              if (cmd.action === "create_task") {
                if (cmd.sourceId) {
-                 const exists = await prisma.task.findUnique({ where: { sourceId: cmd.sourceId }});
+                 const exists = await prisma.task.findUnique({ where: { externalId: cmd.sourceId }});
                  if (exists) {
                    executionMessages.push(`⚠️ Task: "${cmd.title}" already exists (Synced from Gmail).`);
                    continue;
                  }
                }
-               await prisma.task.create({ data: { title: cmd.title, category: cmd.category || "Work", sourceId: cmd.sourceId, sourceType: cmd.sourceId ? "GMAIL" : null, userId: userObj.id }});
+               await prisma.task.create({ data: { title: cmd.title, category: cmd.category || "Work", externalId: cmd.sourceId, userId: userObj.id }});
              }
              else if (cmd.action === "update_task") await prisma.task.update({ where: { id: cmd.taskId }, data: { status: cmd.status || "DONE" }});
              else if (cmd.action === "delete_task") await prisma.task.delete({ where: { id: cmd.taskId }});
@@ -223,7 +229,7 @@ export async function POST(req: Request) {
              const userObj = await prisma.user.upsert({
                where: { email: userEmail },
                update: {},
-               create: { email: userEmail, name: session.user?.name || userEmail.split('@')[0] }
+               create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
              });
              //@ts-ignore
              await prisma.foodOrder.create({ data: { restaurant: cmd.restaurant, items: cmd.items, cost: cmd.cost || 0, etaMinutes: cmd.etaMinutes || 30, userId: userObj.id }});

@@ -1,7 +1,6 @@
 import { prisma } from "./prisma";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { EventSource } from "eventsource";
 
 export type ZomatoOrder = {
   id: string;
@@ -34,7 +33,6 @@ export class ZomatoBridge {
     try {
       // Use SSE transport for remote MCP server
       const transport = new SSEClientTransport(new URL(this.ZOMATO_MCP_URL), {
-        eventSource: EventSource as any, // Polyfill for Node.js
         requestInit: {
           headers: {
             Authorization: `Bearer ${tokenPref.value}`

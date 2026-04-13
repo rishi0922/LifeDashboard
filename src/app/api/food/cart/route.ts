@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
 import { ZomatoBridge } from "@/lib/zomato";
 
 export async function POST(req: Request) {
   try {
     const { action, restaurant, item, cartId } = await req.json();
+
+    // Get user for ZomatoBridge calls
+    const user = await prisma.user.findFirst();
+    const userId = user?.id || "anonymous";
 
     if (action === "PREPARE_CART") {
       // Step 1: Initialize an autonomous cart preparation
@@ -18,7 +23,7 @@ export async function POST(req: Request) {
 
     if (action === "ADD_ITEM") {
       // Step 2: Add a specific item autonomously
-      const result = await ZomatoBridge.addToCart(restaurant, [item]);
+      const result = await ZomatoBridge.addToCart(userId, restaurant, [item]);
       return NextResponse.json({
         success: true,
         itemAdded: item,
