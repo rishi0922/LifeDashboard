@@ -110,7 +110,7 @@ export async function POST(req: Request) {
       if (!exp.amount || !exp.merchant || !exp.sourceId) continue;
       
       try {
-        await (prisma as any).expense.upsert({
+        await prisma.expense.upsert({
           where: { sourceId: exp.sourceId },
           update: {}, 
           create: {
@@ -150,7 +150,7 @@ export async function GET(req: Request) {
     const user = await prisma.user.findUnique({ where: { email: userEmail } });
     if (!user) return NextResponse.json({ expenses: [] });
 
-    const expenses = await (prisma as any).expense.findMany({
+    const expenses = await prisma.expense.findMany({
       where: { userId: user.id },
       orderBy: { date: 'desc' },
       take: 20
