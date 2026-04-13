@@ -11,7 +11,15 @@ interface IPLMatch {
   isLive: boolean;
 }
 
-// Reliable short names
+// Only match IPL 2026 — exclude 2025 and older
+function isIPL2026(name: string): boolean {
+  const n = name.toLowerCase();
+  if (!n.includes("ipl")) return false;
+  // Reject if it references an older year explicitly
+  if (n.includes("2025") || n.includes("2024") || n.includes("2023")) return false;
+  return true;
+}
+
 const TEAM_SHORT: Record<string, string> = {
   "Chennai Super Kings": "CSK",
   "Mumbai Indians": "MI",
@@ -45,9 +53,7 @@ export async function GET() {
       for (const m of Object.values(data?.matches ?? {}) as any[]) {
         const h = m?.header;
         if (!h) continue;
-        const series: string = h.seriesName ?? "";
-        if (!series.toLowerCase().includes("ipl") &&
-            !series.toLowerCase().includes("indian premier league")) continue;
+        if (!isIPL2026(h.seriesName ?? "")) continue;
 
         const ms = m?.miniscore;
         let score1 = "", score2 = "";
@@ -88,10 +94,8 @@ export async function GET() {
       const matches: IPLMatch[] = [];
 
       for (const m of data?.matches ?? []) {
-        const series: string =
-          m?.series?.alternateName ?? m?.series?.longName ?? "";
-        if (!series.toLowerCase().includes("ipl") &&
-            !series.toLowerCase().includes("indian premier league")) continue;
+        const series: string = m?.series?.alternateName ?? m?.series?.longName ?? "";
+        if (!isIPL2026(series)) continue;
 
         const teams = m?.teams ?? [];
         const t1 = teams[0]?.team?.abbreviation ?? teams[0]?.team?.name ?? "TBD";
@@ -113,7 +117,7 @@ export async function GET() {
     }
   } catch (_) { /* fall through */ }
 
-  // ---------- Source 3: cricapi.com (free tier, no key needed for basic) ----------
+  // ---------- Source 3: CricAPI free tier ----------
   try {
     const ca = await fetch(
       "https://api.cricapi.com/v1/currentMatches?apikey=free&offset=0",
@@ -123,8 +127,7 @@ export async function GET() {
       const data = await ca.json();
       const matches: IPLMatch[] = [];
       for (const m of data?.data ?? []) {
-        if (!m?.name?.toLowerCase().includes("ipl") &&
-            !m?.series?.toLowerCase().includes("ipl")) continue;
+        if (!isIPL2026(m?.name ?? "") && !isIPL2026(m?.series ?? "")) continue;
         const parts = (m?.name ?? "").split(" vs ");
         const t1 = short(parts[0]?.trim() ?? "TBD");
         const t2 = short((parts[1] ?? "").split(",")[0]?.trim() ?? "TBD");
@@ -147,6 +150,6 @@ export async function GET() {
     }
   } catch (_) { /* fall through */ }
 
-  // ---------- No live data: return empty so UI shows "No live match" ----------
+  // No live IPL 2026 data found
   return NextResponse.json({ matches: [], source: "none" });
 }

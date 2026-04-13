@@ -68,7 +68,6 @@ export function DashboardHeader() {
       margin: 0,
       width: '100%',
       marginBottom: '0.25rem',
-      gap: '1rem',
     }}>
       {/* Time Hub */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0', flexShrink: 0 }}>
@@ -80,44 +79,47 @@ export function DashboardHeader() {
         </p>
       </div>
 
-      {/* ── IPL Score Pill (always visible, center) ── */}
-      <IPLScoreWidget />
+      {/* Right side: IPL pill + Weather */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0 }}>
+        {/* ── IPL Score Pill ── */}
+        <IPLScoreWidget />
 
-      {/* Weather Hub */}
-      {weatherData ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexShrink: 0 }}>
-          <div style={{ textAlign: 'right' }}>
-            <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: '0.5px' }}>HYDERABAD</p>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'flex-end', marginTop: '0.1rem' }}>
-               <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                 {getHumidityIcon(weatherData.humidity)} {weatherData.humidity}%
-               </span>
-               <span style={{ fontSize: '0.7rem', color: getAQILevel(weatherData.aqi).color, fontWeight: 700 }}>
-                 {getAQILevel(weatherData.aqi).icon} AQI {weatherData.aqi}
-               </span>
+        {/* Weather Hub */}
+        {weatherData ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div style={{ textAlign: 'right' }}>
+              <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: '0.5px' }}>HYDERABAD</p>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'flex-end', marginTop: '0.1rem' }}>
+                 <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                   {getHumidityIcon(weatherData.humidity)} {weatherData.humidity}%
+                 </span>
+                 <span style={{ fontSize: '0.7rem', color: getAQILevel(weatherData.aqi).color, fontWeight: 700 }}>
+                   {getAQILevel(weatherData.aqi).icon} AQI {weatherData.aqi}
+                 </span>
+              </div>
+            </div>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem',
+              background: 'var(--bg-secondary)',
+              padding: '0.4rem 0.8rem',
+              borderRadius: 'var(--radius-xl)',
+              border: '1px solid var(--border-color)'
+            }}>
+              <span style={{ fontSize: '1.25rem' }}>{weatherData.icon}</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                 <span style={{ fontSize: '1.1rem', fontWeight: 800, lineHeight: 1 }}>{weatherData.temp}°C</span>
+                 <span style={{ fontSize: '0.55rem', fontWeight: 700, color: 'var(--text-secondary)' }}>FEELS {weatherData.feelsLike}°</span>
+              </div>
             </div>
           </div>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.5rem',
-            background: 'var(--bg-secondary)',
-            padding: '0.4rem 0.8rem',
-            borderRadius: 'var(--radius-xl)',
-            border: '1px solid var(--border-color)'
-          }}>
-            <span style={{ fontSize: '1.25rem' }}>{weatherData.icon}</span>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-               <span style={{ fontSize: '1.1rem', fontWeight: 800, lineHeight: 1 }}>{weatherData.temp}°C</span>
-               <span style={{ fontSize: '0.55rem', fontWeight: 700, color: 'var(--text-secondary)' }}>FEELS {weatherData.feelsLike}°</span>
-            </div>
+        ) : (
+          <div className="animate-pulse" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+            Initializing Station...
           </div>
-        </div>
-      ) : (
-        <div className="animate-pulse" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', flexShrink: 0 }}>
-          Initializing Station...
-        </div>
-      )}
+        )}
+      </div>
     </header>
   );
 }

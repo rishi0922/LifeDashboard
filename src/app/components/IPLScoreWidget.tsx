@@ -65,7 +65,7 @@ export function IPLScoreWidget() {
       ) : !m ? (
         /* No live match — still show the widget */
         <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap' }}>
-          IPL 2025 · No live match
+          IPL 2026 · No live match
         </span>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', overflow: 'hidden', flex: 1 }}>
