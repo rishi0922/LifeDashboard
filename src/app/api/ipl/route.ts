@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 30;
 
 interface IPLMatch {
   team1: string;
@@ -10,173 +9,144 @@ interface IPLMatch {
   score2: string;
   status: string;
   isLive: boolean;
-  matchTitle: string;
+}
+
+// Reliable short names
+const TEAM_SHORT: Record<string, string> = {
+  "Chennai Super Kings": "CSK",
+  "Mumbai Indians": "MI",
+  "Royal Challengers Bengaluru": "RCB",
+  "Royal Challengers Bangalore": "RCB",
+  "Kolkata Knight Riders": "KKR",
+  "Delhi Capitals": "DC",
+  "Punjab Kings": "PBKS",
+  "Rajasthan Royals": "RR",
+  "Sunrisers Hyderabad": "SRH",
+  "Gujarat Titans": "GT",
+  "Lucknow Super Giants": "LSG",
+};
+
+function short(name: string) {
+  return TEAM_SHORT[name] || name;
 }
 
 export async function GET() {
+  // ---------- Source 1: Cricbuzz live matches ----------
   try {
-    // Fetch from Cricbuzz RSS feed for live scores
-    const res = await fetch(
-      "https://www.cricbuzz.com/match-api/livematches.json",
-      { 
-        next: { revalidate: 30 },
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    const cb = await fetch("https://www.cricbuzz.com/match-api/livematches.json", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      cache: "no-store",
+    });
+
+    if (cb.ok) {
+      const data = await cb.json();
+      const matches: IPLMatch[] = [];
+
+      for (const m of Object.values(data?.matches ?? {}) as any[]) {
+        const h = m?.header;
+        if (!h) continue;
+        const series: string = h.seriesName ?? "";
+        if (!series.toLowerCase().includes("ipl") &&
+            !series.toLowerCase().includes("indian premier league")) continue;
+
+        const ms = m?.miniscore;
+        let score1 = "", score2 = "";
+        if (ms?.batTeam) {
+          const bt = ms.batTeam;
+          score1 = `${bt.teamScore ?? ""}/${bt.teamWkts ?? ""} (${bt.overs ?? ""})`;
         }
-      }
-    );
-
-    if (!res.ok) {
-      // Fallback: Try alternate score source
-      return await fetchFromAlternateSource();
-    }
-
-    const data = await res.json();
-    const matches: IPLMatch[] = [];
-
-    // Parse the Cricbuzz response
-    if (data?.matches) {
-      for (const match of Object.values(data.matches) as any[]) {
-        const header = match?.header;
-        const miniscore = match?.miniscore;
-        
-        if (!header) continue;
-        
-        // Filter for IPL matches only
-        const seriesName = header?.seriesName || "";
-        const isIPL = seriesName.toLowerCase().includes("indian premier league") || 
-                      seriesName.toLowerCase().includes("ipl");
-        
-        if (!isIPL) continue;
-        
-        const team1 = header?.team1?.name || header?.team1?.shortName || "TBD";
-        const team2 = header?.team2?.name || header?.team2?.shortName || "TBD";
-        const status = header?.status || "";
-        const state = header?.state || "";
-        const isLive = state === "In Progress" || state === "innings break";
-
-        let score1 = "";
-        let score2 = "";
-
-        if (miniscore) {
-          const batTeam = miniscore?.batTeam;
-          const bowlTeam = miniscore?.bowlTeam;
-          
-          if (batTeam) {
-            score1 = `${batTeam.teamScore || ""}/${batTeam.teamWkts || ""} (${batTeam.overs || ""})`;
-          }
-          if (bowlTeam) {
-            score2 = `${bowlTeam.teamScore || ""}/${bowlTeam.teamWkts || ""}`;
-          }
+        if (ms?.bowlTeam) {
+          const bw = ms.bowlTeam;
+          score2 = `${bw.teamScore ?? ""}/${bw.teamWkts ?? ""}`;
         }
 
-        // Use status text for scores if miniscore isn't available
-        if (!score1 && !score2 && status) {
-          // Status usually contains the score summary
-        }
-
+        const isLive = ["In Progress", "innings break"].includes(h.state ?? "");
         matches.push({
-          team1: getTeamShortName(team1),
-          team2: getTeamShortName(team2),
-          score1,
-          score2,
-          status: status || (isLive ? "LIVE" : "Upcoming"),
+          team1: short(h.team1?.name ?? h.team1?.shortName ?? "TBD"),
+          team2: short(h.team2?.name ?? h.team2?.shortName ?? "TBD"),
+          score1, score2,
+          status: h.status ?? (isLive ? "LIVE" : "Upcoming"),
           isLive,
-          matchTitle: `${getTeamShortName(team1)} vs ${getTeamShortName(team2)}`
         });
       }
-    }
 
-    // If no Cricbuzz data, try alternate source
-    if (matches.length === 0) {
-      return await fetchFromAlternateSource();
-    }
-
-    return NextResponse.json({ 
-      matches,
-      lastUpdated: new Date().toISOString()
-    });
-
-  } catch (error: any) {
-    console.error("IPL Score Fetch Error:", error.message);
-    return await fetchFromAlternateSource();
-  }
-}
-
-async function fetchFromAlternateSource(): Promise<NextResponse> {
-  try {
-    // Use ESPN Cricinfo API as fallback
-    const res = await fetch(
-      "https://hs-consumer-api.espncricinfo.com/v1/pages/matches/current?lang=en&latest=true",
-      {
-        next: { revalidate: 30 },
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+      if (matches.length > 0) {
+        return NextResponse.json({ matches, source: "cricbuzz" });
       }
+    }
+  } catch (_) { /* fall through */ }
+
+  // ---------- Source 2: ESPN Cricinfo ----------
+  try {
+    const es = await fetch(
+      "https://hs-consumer-api.espncricinfo.com/v1/pages/matches/current?lang=en&latest=true",
+      { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
     );
 
-    if (!res.ok) {
-      return NextResponse.json({ matches: [], lastUpdated: new Date().toISOString() });
+    if (es.ok) {
+      const data = await es.json();
+      const matches: IPLMatch[] = [];
+
+      for (const m of data?.matches ?? []) {
+        const series: string =
+          m?.series?.alternateName ?? m?.series?.longName ?? "";
+        if (!series.toLowerCase().includes("ipl") &&
+            !series.toLowerCase().includes("indian premier league")) continue;
+
+        const teams = m?.teams ?? [];
+        const t1 = teams[0]?.team?.abbreviation ?? teams[0]?.team?.name ?? "TBD";
+        const t2 = teams[1]?.team?.abbreviation ?? teams[1]?.team?.name ?? "TBD";
+        const isLive = ["LIVE", "IN_PROGRESS"].includes(m?.state ?? "");
+
+        matches.push({
+          team1: short(t1), team2: short(t2),
+          score1: teams[0]?.score ?? "",
+          score2: teams[1]?.score ?? "",
+          status: m?.statusText ?? m?.status ?? (isLive ? "LIVE" : "Upcoming"),
+          isLive,
+        });
+      }
+
+      if (matches.length > 0) {
+        return NextResponse.json({ matches, source: "espn" });
+      }
     }
+  } catch (_) { /* fall through */ }
 
-    const data = await res.json();
-    const matches: IPLMatch[] = [];
-
-    const matchList = data?.matches || [];
-    for (const match of matchList) {
-      const series = match?.series?.alternateName || match?.series?.longName || "";
-      const isIPL = series.toLowerCase().includes("ipl") || 
-                    series.toLowerCase().includes("indian premier league");
-
-      if (!isIPL) continue;
-
-      const teams = match?.teams || [];
-      const team1 = teams[0]?.team?.abbreviation || teams[0]?.team?.name || "TBD";
-      const team2 = teams[1]?.team?.abbreviation || teams[1]?.team?.name || "TBD";
-
-      const score1Innings = teams[0]?.score || "";
-      const score2Innings = teams[1]?.score || "";
-
-      const state = match?.state || "";
-      const status = match?.statusText || match?.status || "";
-      const isLive = state === "LIVE" || state === "IN_PROGRESS";
-
-      matches.push({
-        team1,
-        team2,
-        score1: score1Innings,
-        score2: score2Innings,
-        status,
-        isLive,
-        matchTitle: `${team1} vs ${team2}`
-      });
+  // ---------- Source 3: cricapi.com (free tier, no key needed for basic) ----------
+  try {
+    const ca = await fetch(
+      "https://api.cricapi.com/v1/currentMatches?apikey=free&offset=0",
+      { headers: { "User-Agent": "Mozilla/5.0" }, cache: "no-store" }
+    );
+    if (ca.ok) {
+      const data = await ca.json();
+      const matches: IPLMatch[] = [];
+      for (const m of data?.data ?? []) {
+        if (!m?.name?.toLowerCase().includes("ipl") &&
+            !m?.series?.toLowerCase().includes("ipl")) continue;
+        const parts = (m?.name ?? "").split(" vs ");
+        const t1 = short(parts[0]?.trim() ?? "TBD");
+        const t2 = short((parts[1] ?? "").split(",")[0]?.trim() ?? "TBD");
+        const isLive = m?.matchStarted && !m?.matchEnded;
+        matches.push({
+          team1: t1, team2: t2,
+          score1: m?.score?.[0]?.r != null
+            ? `${m.score[0].r}/${m.score[0].w} (${m.score[0].o})`
+            : "",
+          score2: m?.score?.[1]?.r != null
+            ? `${m.score[1].r}/${m.score[1].w}`
+            : "",
+          status: m?.status ?? (isLive ? "LIVE" : "Upcoming"),
+          isLive: !!isLive,
+        });
+      }
+      if (matches.length > 0) {
+        return NextResponse.json({ matches, source: "cricapi" });
+      }
     }
+  } catch (_) { /* fall through */ }
 
-    return NextResponse.json({
-      matches,
-      lastUpdated: new Date().toISOString()
-    });
-
-  } catch (err) {
-    console.error("Alternate IPL source also failed:", err);
-    return NextResponse.json({ matches: [], lastUpdated: new Date().toISOString() });
-  }
-}
-
-function getTeamShortName(name: string): string {
-  const mapping: Record<string, string> = {
-    "Chennai Super Kings": "CSK",
-    "Mumbai Indians": "MI",
-    "Royal Challengers Bengaluru": "RCB",
-    "Royal Challengers Bangalore": "RCB",
-    "Kolkata Knight Riders": "KKR",
-    "Delhi Capitals": "DC",
-    "Punjab Kings": "PBKS",
-    "Rajasthan Royals": "RR",
-    "Sunrisers Hyderabad": "SRH",
-    "Gujarat Titans": "GT",
-    "Lucknow Super Giants": "LSG",
-  };
-  return mapping[name] || name;
+  // ---------- No live data: return empty so UI shows "No live match" ----------
+  return NextResponse.json({ matches: [], source: "none" });
 }

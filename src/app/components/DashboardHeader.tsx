@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { IPLScoreWidget } from "./IPLScoreWidget";
 
 export function DashboardHeader() {
   const [time, setTime] = useState<string>("");
@@ -66,10 +67,11 @@ export function DashboardHeader() {
       padding: '0.6rem 2rem',
       margin: 0,
       width: '100%',
-      marginBottom: '0.25rem'
+      marginBottom: '0.25rem',
+      gap: '1rem',
     }}>
       {/* Time Hub */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0', flexShrink: 0 }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, letterSpacing: '-0.5px', fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
           {time || "Loading..."}
         </h1>
@@ -78,9 +80,12 @@ export function DashboardHeader() {
         </p>
       </div>
 
-      {/* Weather Hub (Context-Aware Update) */}
+      {/* ── IPL Score Pill (always visible, center) ── */}
+      <IPLScoreWidget />
+
+      {/* Weather Hub */}
       {weatherData ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexShrink: 0 }}>
           <div style={{ textAlign: 'right' }}>
             <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 700, letterSpacing: '0.5px' }}>HYDERABAD</p>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'flex-end', marginTop: '0.1rem' }}>
@@ -109,7 +114,7 @@ export function DashboardHeader() {
           </div>
         </div>
       ) : (
-        <div className="animate-pulse" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+        <div className="animate-pulse" style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', flexShrink: 0 }}>
           Initializing Station...
         </div>
       )}
