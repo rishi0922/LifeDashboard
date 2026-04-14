@@ -232,13 +232,24 @@ export function FinanceGrid() {
                 width: '32px', 
                 height: '32px', 
                 borderRadius: '8px', 
-                background: exp.category === 'Food' ? 'rgba(239, 68, 68, 0.1)' : exp.category === 'Shopping' ? 'rgba(99, 102, 241, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                background: exp.category === 'Food' ? 'rgba(239, 68, 68, 0.1)' 
+                          : exp.category === 'Shopping' ? 'rgba(99, 102, 241, 0.1)' 
+                          : exp.category === 'Entertainment' ? 'rgba(168, 85, 247, 0.1)'
+                          : exp.category === 'Travel' ? 'rgba(234, 179, 8, 0.1)'
+                          : exp.category === 'Investment' ? 'rgba(14, 165, 233, 0.1)'
+                          : exp.category === 'Health' ? 'rgba(236, 72, 153, 0.1)'
+                          : 'rgba(34, 197, 94, 0.1)', // defaults to green for Bills/Other
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontSize: '1rem'
               }}>
-                {exp.category === 'Food' ? '🍕' : exp.category === 'Shopping' ? '🛍️' : exp.category === 'Travel' ? '🚕' : '📑'}
+                {exp.category === 'Food' ? '🍕' : 
+                 exp.category === 'Shopping' ? '🛍️' : 
+                 exp.category === 'Travel' ? '🚕' : 
+                 exp.category === 'Entertainment' ? '🍿' :
+                 exp.category === 'Investment' ? '📈' :
+                 exp.category === 'Health' ? '⚕️' : '📑'}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{exp.merchant}</div>

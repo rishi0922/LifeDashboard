@@ -30,11 +30,12 @@ export async function POST(req: Request) {
     // 1. Fetch Targeted Gmail Snippets
     const keywords = [
       "debited", "spent", "paid", "txn", "PhonePe", "GPay", "HDFC", "Axis", "CRED", 
-      "transfer", "payment", "shopping", "order confirmed", "transaction", "amount", "₹"
+      "transfer", "payment", "shopping", "order confirmed", "transaction", "amount", "₹",
+      "UPI", "Swiggy", "Zomato", "BookMyShow", "Netflix", "Subscription", "Investment"
     ].join(" OR ");
     const query = encodeURIComponent(keywords);
     
-    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=50`, {
+    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=100`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     });
     
@@ -84,8 +85,8 @@ export async function POST(req: Request) {
       RULES:
       1. Only extract genuine expenses (money debited, spent, or shopping orders).
       2. IGNORE refunds, OTPs, login alerts, or credit/deposit alerts.
-      3. Categorize exactly as: "Food", "Travel", "Bills", "Shopping".
-      4. MERCHANT: Identify the specific shop, app (e.g., Zomato, Amazon, Uber), or bank/biller.
+      3. Categorize exactly as: "Food", "Travel", "Bills", "Shopping", "Entertainment", "Investment", "Health", "Other".
+      4. MERCHANT: Identify the specific shop, app (e.g., Zomato, BookMyShow, Amazon, Uber), or bank/biller.
       
       IMPORTANT:
       - Return a JSON array. 

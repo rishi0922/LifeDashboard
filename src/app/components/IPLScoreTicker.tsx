@@ -9,7 +9,52 @@ interface IPLMatch {
   score2: string;
   status: string;
   isLive: boolean;
-  matchTitle: string;
+}
+
+// All 10 IPL franchise names + abbreviations
+const IPL_TEAMS = new Set([
+  "CSK", "MI", "RCB", "KKR", "DC", "PBKS", "RR", "SRH", "GT", "LSG",
+  "Chennai Super Kings",
+  "Mumbai Indians",
+  "Royal Challengers Bengaluru",
+  "Royal Challengers Bangalore",
+  "Kolkata Knight Riders",
+  "Delhi Capitals",
+  "Punjab Kings",
+  "Rajasthan Royals",
+  "Sunrisers Hyderabad",
+  "Gujarat Titans",
+  "Lucknow Super Giants",
+]);
+
+const TEAM_SHORT: Record<string, string> = {
+  "Chennai Super Kings": "CSK",
+  "Mumbai Indians": "MI",
+  "Royal Challengers Bengaluru": "RCB",
+  "Royal Challengers Bangalore": "RCB",
+  "Kolkata Knight Riders": "KKR",
+  "Delhi Capitals": "DC",
+  "Punjab Kings": "PBKS",
+  "Rajasthan Royals": "RR",
+  "Sunrisers Hyderabad": "SRH",
+  "Gujarat Titans": "GT",
+  "Lucknow Super Giants": "LSG",
+};
+
+function short(name: string): string {
+  return TEAM_SHORT[name] ?? name;
+}
+
+function isIPLMatch(t1: string, t2: string): boolean {
+  return IPL_TEAMS.has(t1) || IPL_TEAMS.has(t2) ||
+    Object.keys(TEAM_SHORT).some(k => t1.includes(k) || t2.includes(k));
+}
+
+function isIPLSeries(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.includes("ipl") ||
+    n.includes("indian premier league") ||
+    (n.includes("premier league") && n.includes("india"));
 }
 
 export function IPLScoreTicker() {
@@ -19,13 +64,53 @@ export function IPLScoreTicker() {
 
   const fetchScores = async () => {
     try {
-      const res = await fetch("/api/ipl");
-      if (res.ok) {
-        const data = await res.json();
-        setMatches(data.matches || []);
+      const url = "https://www.cricbuzz.com/match-api/livematches.json";
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+      
+      const res = await fetch(proxyUrl, { cache: "no-store" });
+      if (!res.ok) throw new Error("Cricbuzz fetch failed");
+      const data = await res.json();
+      
+      const newMatches: IPLMatch[] = [];
+
+      for (const m of Object.values(data?.matches ?? {}) as any[]) {
+        const h = m?.header;
+        if (!h) continue;
+
+        const t1Raw = h.team1?.name ?? h.team1?.shortName ?? "";
+        const t2Raw = h.team2?.name ?? h.team2?.shortName ?? "";
+        const series = h.seriesName ?? "";
+
+        if (!isIPLMatch(t1Raw, t2Raw) && !isIPLSeries(series)) continue;
+
+        const ms = m?.miniscore;
+        let score1 = "", score2 = "";
+        if (ms?.batTeam) {
+          const bt = ms.batTeam;
+          score1 = `${bt.teamScore ?? ""}/${bt.teamWkts ?? ""} (${bt.overs ?? ""})`;
+        }
+        if (ms?.bowlTeam) {
+          const bw = ms.bowlTeam;
+          score2 = `${bw.teamScore ?? ""}/${bw.teamWkts ?? ""}`;
+        }
+        if (!score1 && !score2 && h.status) {
+          score1 = "";
+        }
+
+        const isLive = ["In Progress", "innings break"].includes(h.state ?? "");
+        newMatches.push({
+          team1: short(t1Raw) || t1Raw,
+          team2: short(t2Raw) || t2Raw,
+          score1,
+          score2,
+          status: h.status ?? (isLive ? "LIVE" : "Upcoming"),
+          isLive,
+        });
       }
+
+      setMatches(newMatches);
     } catch (err) {
-      console.error("IPL ticker fetch failed", err);
+      console.error("IPL ticker fetch failed via AllOrigins", err);
     } finally {
       setLoading(false);
     }
