@@ -12,37 +12,12 @@ const FALLBACK_MODELS = [
 let cachedWorkingModel: string | null = null;
 
 /**
- * Returns a working Gemini model by trying a chain of fallback options.
- * Caches the first successful model name for the duration of the process.
+ * Returns a robust Gemini model instance, preferring gemini-1.5-flash 
+ * for maximum stability and availability on Vercel Serverless.
  */
 export async function getRobustModel(genAI: GoogleGenerativeAI): Promise<GenerativeModel> {
-  // If we already found a working model in this session, use it immediately
-  if (cachedWorkingModel) {
-    return genAI.getGenerativeModel({ model: cachedWorkingModel });
-  }
-
-  console.log("Searching for a working Gemini model...");
-  let lastError: any = null;
-
-  for (const modelName of FALLBACK_MODELS) {
-    try {
-      const model = genAI.getGenerativeModel({ model: modelName });
-      
-      // Simple probe to see if the model exists and is responsive
-      // We use a very short prompt to minimize latency
-      await model.generateContent("ping");
-      
-      console.log(`Successfully identified working model: ${modelName}`);
-      cachedWorkingModel = modelName;
-      return model;
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`Model ${modelName} is unavailable: ${err.message || err.statusText || "Unknown Error"}`);
-      continue;
-    }
-  }
-
-  throw lastError || new Error("All Gemini models failed to initialize. Check your API key and network connection.");
+  // Use gemini-1.5-flash which has the highest request limits and availability
+  return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 }
 
 /**
