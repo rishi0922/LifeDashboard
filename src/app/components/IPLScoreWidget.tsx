@@ -38,11 +38,8 @@ function isIPLTeam(name: string) {
 
 async function fetchLiveMatches(): Promise<IPLMatch[]> {
   try {
-    // The main ESPN public scoreboard API works directly from the client without CORS proxies
-    const res = await fetch(
-      "https://site.api.espn.com/apis/site/v2/sports/cricket/8048/scoreboard",
-      { cache: "no-store" }
-    );
+    // The proxy API handles the external fetch, bypassing Adblockers and CORS
+    const res = await fetch("/api/ipl", { cache: "no-store", headers: { "Accept": "application/json" } });
     
     if (res.ok) {
       const data = await res.json();

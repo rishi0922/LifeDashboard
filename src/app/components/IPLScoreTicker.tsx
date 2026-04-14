@@ -64,9 +64,9 @@ export function IPLScoreTicker() {
 
   const fetchScores = async () => {
     try {
-      const url = "https://site.api.espn.com/apis/site/v2/sports/cricket/8048/scoreboard";
+      const url = "/api/ipl";
       
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(url, { cache: "no-store", headers: { "Accept": "application/json" } });
       if (!res.ok) throw new Error("ESPN fetch failed");
       const data = await res.json();
       
