@@ -385,7 +385,7 @@ export function FinanceGrid() {
                   <RechartsTooltip 
                     contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.8rem' }}
                     itemStyle={{ color: 'var(--text-primary)' }}
-                    formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Total Spent']}
+                    formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, 'Total Spent']}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -405,7 +405,7 @@ export function FinanceGrid() {
                   <RechartsTooltip 
                     cursor={{ fill: 'rgba(255,255,255,0.05)' }} 
                     contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.8rem' }}
-                    formatter={(value: number) => [`₹${value.toLocaleString()}`, 'Expenses']}
+                    formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, 'Expenses']}
                   />
                   <Bar dataKey="total" radius={[6, 6, 0, 0]}>
                     {monthlyData.map((entry, index) => (
