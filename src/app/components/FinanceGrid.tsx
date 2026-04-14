@@ -378,9 +378,29 @@ export function FinanceGrid() {
                     ))}
                   </Pie>
                   <RechartsTooltip 
-                    contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.8rem' }}
-                    itemStyle={{ color: 'var(--text-primary)' }}
-                    formatter={(value: any) => [`₹${Number(value).toLocaleString()}`, 'Total Spent']}
+                    content={({ active, payload }: any) => {
+                      if (active && payload && payload.length) {
+                        const total = expenses.reduce((s: number, e: any) => s + e.amount, 0);
+                        const value = payload[0].value;
+                        const percent = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                        return (
+                          <div style={{ 
+                            background: 'var(--bg-secondary)', 
+                            border: '1px solid var(--border-color)', 
+                            padding: '12px', 
+                            borderRadius: '12px', 
+                            boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
+                            backdropFilter: 'blur(8px)',
+                            minWidth: '120px'
+                          }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>{payload[0].name}</div>
+                            <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>₹{value.toLocaleString()}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--accent-color)', fontWeight: 700, marginTop: '2px' }}>{percent}% of Spend</div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
                   />
                 </PieChart>
               </ResponsiveContainer>
