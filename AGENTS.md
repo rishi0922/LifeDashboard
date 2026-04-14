@@ -20,7 +20,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ### 🔒 Locked Models
 - **Primary**: `gemini-3.1-flash-lite-preview`
 - **Secondary**: `gemini-2.5-flash`
-- **Safety Net**: `gemini-1.5-flash` (Added to prevent 429/503 errors from breaking core features)
+- **Emergency Safety Nets**: `gemini-2.5-flash-lite`, `gemini-flash-lite-latest`, `gemini-flash-latest` (Added to prevent strict 20/day quota limits from silencing the AI Chat Agent)
 
 ### ⚠️ IMPORTANT: Change Policy
 - **DO NOT** change these models or the fallback order in `src/lib/gemini.ts` without explicit user approval.
