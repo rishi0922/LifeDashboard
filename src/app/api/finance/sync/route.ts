@@ -153,8 +153,7 @@ export async function GET(req: Request) {
 
     const expenses = await prisma.expense.findMany({
       where: { userId: user.id },
-      orderBy: { date: 'desc' },
-      take: 20
+      orderBy: { date: 'desc' }
     });
 
     return NextResponse.json({ expenses });
