@@ -64,53 +64,43 @@ export function IPLScoreTicker() {
 
   const fetchScores = async () => {
     try {
-      const url = "https://www.cricbuzz.com/match-api/livematches.json";
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+      const url = "https://site.api.espn.com/apis/site/v2/sports/cricket/8048/scoreboard";
       
-      const res = await fetch(proxyUrl, { cache: "no-store" });
-      if (!res.ok) throw new Error("Cricbuzz fetch failed");
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("ESPN fetch failed");
       const data = await res.json();
       
       const newMatches: IPLMatch[] = [];
 
-      for (const m of Object.values(data?.matches ?? {}) as any[]) {
-        const h = m?.header;
-        if (!h) continue;
+      for (const m of data?.events ?? []) {
+        if (!m.competitors || m.competitors.length < 2) continue;
 
-        const t1Raw = h.team1?.name ?? h.team1?.shortName ?? "";
-        const t2Raw = h.team2?.name ?? h.team2?.shortName ?? "";
-        const series = h.seriesName ?? "";
+        const t1 = m.competitors[0];
+        const t2 = m.competitors[1];
 
-        if (!isIPLMatch(t1Raw, t2Raw) && !isIPLSeries(series)) continue;
+        const t1Raw = t1.team?.shortDisplayName || t1.team?.name || "";
+        const t2Raw = t2.team?.shortDisplayName || t2.team?.name || "";
 
-        const ms = m?.miniscore;
-        let score1 = "", score2 = "";
-        if (ms?.batTeam) {
-          const bt = ms.batTeam;
-          score1 = `${bt.teamScore ?? ""}/${bt.teamWkts ?? ""} (${bt.overs ?? ""})`;
-        }
-        if (ms?.bowlTeam) {
-          const bw = ms.bowlTeam;
-          score2 = `${bw.teamScore ?? ""}/${bw.teamWkts ?? ""}`;
-        }
-        if (!score1 && !score2 && h.status) {
-          score1 = "";
-        }
+        const score1 = t1.score || "";
+        const score2 = t2.score || "";
 
-        const isLive = ["In Progress", "innings break"].includes(h.state ?? "");
+        const statusStr = m.status?.type?.detail || "Upcoming";
+        // 'in' means currently live, 'pre' means upcoming, 'post' means finished
+        const isLive = m.status?.type?.state === "in";
+
         newMatches.push({
           team1: short(t1Raw) || t1Raw,
           team2: short(t2Raw) || t2Raw,
           score1,
           score2,
-          status: h.status ?? (isLive ? "LIVE" : "Upcoming"),
+          status: statusStr,
           isLive,
         });
       }
 
       setMatches(newMatches);
     } catch (err) {
-      console.error("IPL ticker fetch failed via AllOrigins", err);
+      console.error("IPL ticker fetch failed via ESPN", err);
     } finally {
       setLoading(false);
     }
