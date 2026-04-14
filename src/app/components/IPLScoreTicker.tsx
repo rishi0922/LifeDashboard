@@ -73,10 +73,11 @@ export function IPLScoreTicker() {
       const newMatches: IPLMatch[] = [];
 
       for (const m of data?.events ?? []) {
-        if (!m.competitors || m.competitors.length < 2) continue;
+        const competition = m.competitions?.[0];
+        if (!competition || !competition.competitors || competition.competitors.length < 2) continue;
 
-        const t1 = m.competitors[0];
-        const t2 = m.competitors[1];
+        const t1 = competition.competitors[0];
+        const t2 = competition.competitors[1];
 
         const t1Raw = t1.team?.shortDisplayName || t1.team?.name || "";
         const t2Raw = t2.team?.shortDisplayName || t2.team?.name || "";
