@@ -217,28 +217,45 @@ export function FinanceGrid() {
       </div>
 
       {/* Expense Intelligence (Gmail Synced Ledger / Visuals) */}
-      <div className="bento-item sub-area glass-panel animate-scale-in delay-200" style={{ display: 'flex', flexDirection: 'column', minHeight: '350px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <h3 style={{ fontSize: '1.25rem', margin: 0 }}>📊 Expense Radar</h3>
-            <div style={{ display: 'flex', gap: '4px', background: 'var(--bg-secondary)', padding: '2px', borderRadius: '8px' }}>
-              {[0, 1, 2].map(t => (
+      <div className="bento-item sub-area glass-panel animate-scale-in delay-200" style={{ display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <h3 style={{ fontSize: '1.25rem', margin: 0, whiteSpace: 'nowrap' }}>📊 Expense Intelligence</h3>
+            <div style={{ 
+              display: 'flex', 
+              gap: '2px', 
+              background: 'rgba(0,0,0,0.05)', 
+              padding: '3px', 
+              borderRadius: '10px',
+              border: '1px solid var(--border-color)',
+              boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.02)'
+            }}>
+              {[
+                { id: 0, label: 'LIST', icon: '📑' },
+                { id: 1, label: 'PIE', icon: '🥧' },
+                { id: 2, label: 'BAR', icon: '📊' }
+              ].map(t => (
                 <button 
-                  key={t}
-                  onClick={() => setActiveTab(t)}
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
                   style={{
-                    padding: '4px 8px',
-                    fontSize: '0.6rem',
-                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '0.7rem',
+                    borderRadius: '7px',
                     border: 'none',
-                    background: activeTab === t ? 'var(--accent-color)' : 'transparent',
-                    color: activeTab === t ? '#fff' : 'var(--text-secondary)',
+                    background: activeTab === t.id ? 'var(--accent-color)' : 'transparent',
+                    color: activeTab === t.id ? '#fff' : 'var(--text-secondary)',
                     fontWeight: 800,
                     cursor: 'pointer',
-                    transition: 'all 0.2s ease'
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    boxShadow: activeTab === t.id ? '0 2px 8px rgba(99, 102, 241, 0.3)' : 'none'
                   }}
                 >
-                  {t === 0 ? 'LIST' : t === 1 ? 'PIE' : 'BAR'}
+                  <span style={{ fontSize: '0.8rem' }}>{t.icon}</span>
+                  {t.label}
                 </button>
               ))}
             </div>
