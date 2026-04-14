@@ -144,7 +144,10 @@ export async function POST(req: Request) {
     const actionRegex = /\{[\s\S]*?"action":[\s\S]*?\}/g;
     const actionBlocks = text.match(actionRegex) || [];
     
-    if (actionBlocks.length > 0) {
+    // De-duplicate identical JSON blocks to prevent double-execution if the LLM repeats itself
+    const uniqueBlocks = Array.from(new Set(actionBlocks));
+    
+    if (uniqueBlocks.length > 0) {
       const executionMessages: string[] = [];
       
       // Helper for IST Offset injection
@@ -154,7 +157,7 @@ export async function POST(req: Request) {
         return `${iso}+05:30`; // Force IST offset
       };
 
-      for (const jsonStr of actionBlocks) {
+      for (const jsonStr of uniqueBlocks) {
         try {
           const cmd = JSON.parse(jsonStr);
           
@@ -176,15 +179,33 @@ export async function POST(req: Request) {
              executionMessages.push(`🛒 Cart drafted at **${cmd.restaurant}** with: ${cmd.items.join(", ")}. Follow the link in the Food panel to checkout!`);
           } else if (cmd.action.includes("event") && accessToken) {
              // 1. Calendar Conflict Check
-             const timeMin = encodeURIComponent(formatTime(cmd.startTime));
-             const timeMax = encodeURIComponent(formatTime(cmd.endTime || cmd.startTime));
+             const startDT = formatTime(cmd.startTime);
+             const endDT = formatTime(cmd.endTime || cmd.startTime);
+             
+             // Google timeMax is exclusive. If start == end, the window is zero-width and might return 0 results.
+             // We expand the search window by 1 minute to ensure we catch the event start.
+             let searchEnd = endDT;
+             if (startDT === endDT) {
+               const d = new Date(startDT);
+               d.setMinutes(d.getMinutes() + 1);
+               searchEnd = d.toISOString();
+             }
+
+             const timeMin = encodeURIComponent(startDT);
+             const timeMax = encodeURIComponent(searchEnd);
+             
              const conflictsRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&q=${encodeURIComponent(cmd.summary)}`, {
                headers: { "Authorization": `Bearer ${accessToken}` }
              });
              
              if (conflictsRes.ok) {
                const conflicts = await conflictsRes.json();
-               if (conflicts.items && conflicts.items.length > 0) {
+               // Manually verify exact title match to avoid fuzzy false positives from 'q'
+               const exactMatch = conflicts.items?.find((ev: any) => 
+                 ev.summary?.toLowerCase().trim() === cmd.summary?.toLowerCase().trim()
+               );
+               
+               if (exactMatch) {
                  executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists at this time.`);
                  continue; 
                }
