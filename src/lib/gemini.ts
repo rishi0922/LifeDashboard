@@ -2,22 +2,40 @@ import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 
 const FALLBACK_MODELS = [
   "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-latest",
-  "gemini-pro"
+  "gemini-2.5-flash"
 ];
 
 let cachedWorkingModel: string | null = null;
 
 /**
- * Returns a robust Gemini model instance, preferring gemini-1.5-flash 
- * for maximum stability and availability on Vercel Serverless.
+ * Returns a working Gemini model by trying a chain of fallback options.
+ * Caches the first successful model name for the duration of the process.
+ * ONLY uses gemini-3.1-flash-lite and gemini-2.5-flash per user instructions.
  */
 export async function getRobustModel(genAI: GoogleGenerativeAI): Promise<GenerativeModel> {
-  // Use gemini-1.5-flash which has the highest request limits and availability
-  return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  if (cachedWorkingModel) {
+    return genAI.getGenerativeModel({ model: cachedWorkingModel });
+  }
+
+  let lastError: any = null;
+
+  for (const modelName of FALLBACK_MODELS) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modelName });
+      
+      // Probe to see if the model exists and is responsive
+      await model.generateContent("ping");
+      
+      cachedWorkingModel = modelName;
+      return model;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`Model ${modelName} is unavailable: ${err.message || "Unknown Error"}`);
+      continue;
+    }
+  }
+
+  throw lastError || new Error("Selected Gemini models (2.5/3.1) failed to initialize. Check your API key.");
 }
 
 /**

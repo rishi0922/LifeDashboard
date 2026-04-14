@@ -14,3 +14,14 @@
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
+
+# AI Configuration Rules
+<!-- BEGIN:ai-config-rules -->
+### 🔒 Locked Models
+- **Primary**: `gemini-3.1-flash-lite-preview`
+- **Secondary (Fallback)**: `gemini-2.5-flash`
+
+### ⚠️ IMPORTANT: Change Policy
+- **DO NOT** change these models or the fallback order in `src/lib/gemini.ts` without explicit user approval.
+- High-priority preference over "stability" or "standard" models.
+<!-- END:ai-config-rules -->
