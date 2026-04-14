@@ -19,7 +19,8 @@ This version has breaking changes — APIs, conventions, and file structure may 
 <!-- BEGIN:ai-config-rules -->
 ### 🔒 Locked Models
 - **Primary**: `gemini-3.1-flash-lite-preview`
-- **Secondary (Fallback)**: `gemini-2.5-flash`
+- **Secondary**: `gemini-2.5-flash`
+- **Safety Net**: `gemini-1.5-flash` (Added to prevent 429/503 errors from breaking core features)
 
 ### ⚠️ IMPORTANT: Change Policy
 - **DO NOT** change these models or the fallback order in `src/lib/gemini.ts` without explicit user approval.

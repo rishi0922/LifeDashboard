@@ -2,7 +2,8 @@ import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 
 const FALLBACK_MODELS = [
   "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-flash"
+  "gemini-2.5-flash",
+  "gemini-1.5-flash"
 ];
 
 let cachedWorkingModel: string | null = null;
