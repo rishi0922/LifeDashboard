@@ -37,86 +37,47 @@ function isIPLTeam(name: string) {
 }
 
 async function fetchLiveMatches(): Promise<IPLMatch[]> {
-  // Fetch directly from browser — Cricbuzz allows browser requests (CORS open for JSON endpoint)
   try {
-    const res = await fetch("https://www.cricbuzz.com/match-api/livematches.json", {
-      headers: {
-        "Accept": "application/json",
-        // No Authorization needed — public endpoint, works from browser
-      },
-      cache: "no-store",
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      const out: IPLMatch[] = [];
-
-      for (const m of Object.values(data?.matches ?? {}) as any[]) {
-        const h = m?.header;
-        if (!h) continue;
-
-        const t1Raw = h.team1?.name ?? h.team1?.shortName ?? "";
-        const t2Raw = h.team2?.name ?? h.team2?.shortName ?? "";
-        const series: string = (h.seriesName ?? "").toLowerCase();
-
-        const isIPL =
-          isIPLTeam(t1Raw) || isIPLTeam(t2Raw) ||
-          series.includes("ipl") ||
-          series.includes("indian premier league");
-
-        if (!isIPL) continue;
-
-        const ms = m?.miniscore;
-        let score1 = "", score2 = "";
-        if (ms?.batTeam) {
-          score1 = `${ms.batTeam.teamScore ?? ""}/${ms.batTeam.teamWkts ?? ""} (${ms.batTeam.overs ?? ""})`;
-        }
-        if (ms?.bowlTeam) {
-          score2 = `${ms.bowlTeam.teamScore ?? ""}/${ms.bowlTeam.teamWkts ?? ""}`;
-        }
-
-        const isLive = ["In Progress", "innings break"].includes(h.state ?? "");
-        out.push({
-          team1: short(t1Raw) || t1Raw,
-          team2: short(t2Raw) || t2Raw,
-          score1, score2,
-          status: h.status ?? (isLive ? "LIVE" : "Upcoming"),
-          isLive,
-        });
-      }
-      if (out.length > 0) return out;
-    }
-  } catch (_) {}
-
-  // Fallback: ESPN Cricinfo (also allows browser requests)
-  try {
+    // The main ESPN public scoreboard API works directly from the client without CORS proxies
     const res = await fetch(
-      "https://hs-consumer-api.espncricinfo.com/v1/pages/matches/current?lang=en&latest=true",
+      "https://site.api.espn.com/apis/site/v2/sports/cricket/8048/scoreboard",
       { cache: "no-store" }
     );
+    
     if (res.ok) {
       const data = await res.json();
       const out: IPLMatch[] = [];
-      for (const m of data?.matches ?? []) {
-        const series = (m?.series?.alternateName ?? m?.series?.longName ?? "").toLowerCase();
-        const teams = m?.teams ?? [];
-        const t1Raw = teams[0]?.team?.abbreviation ?? teams[0]?.team?.name ?? "";
-        const t2Raw = teams[1]?.team?.abbreviation ?? teams[1]?.team?.name ?? "";
-        const isIPL = isIPLTeam(t1Raw) || isIPLTeam(t2Raw) || series.includes("ipl") || series.includes("indian premier league");
-        if (!isIPL) continue;
-        const isLive = ["LIVE", "IN_PROGRESS"].includes(m?.state ?? "");
+      
+      for (const m of data?.events ?? []) {
+        const competition = m.competitions?.[0];
+        if (!competition || !competition.competitors || competition.competitors.length < 2) continue;
+
+        const t1 = competition.competitors[0];
+        const t2 = competition.competitors[1];
+
+        const t1Raw = t1.team?.shortDisplayName || t1.team?.name || "";
+        const t2Raw = t2.team?.shortDisplayName || t2.team?.name || "";
+
+        const score1 = t1.score || "";
+        const score2 = t2.score || "";
+
+        const statusStr = m.status?.type?.detail || "Upcoming";
+        const isLive = m.status?.type?.state === "in";
+
         out.push({
           team1: short(t1Raw) || t1Raw,
           team2: short(t2Raw) || t2Raw,
-          score1: typeof teams[0]?.score === "string" ? teams[0].score : "",
-          score2: typeof teams[1]?.score === "string" ? teams[1].score : "",
-          status: m?.statusText ?? m?.status ?? (isLive ? "LIVE" : "Upcoming"),
+          score1,
+          score2,
+          status: statusStr,
           isLive,
         });
       }
-      if (out.length > 0) return out;
+      return out;
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn("ESPN Scoreboard API fetch failed:", err);
+  }
 
   return [];
 }
