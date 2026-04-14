@@ -52,18 +52,8 @@ export function FinanceGrid() {
     return () => clearInterval(interval);
   }, []);
 
-  // Keyboard Navigation: Arrow Keys to cycle tabs
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') {
-        setActiveTab(prev => (prev + 1) % 3);
-      } else if (e.key === 'ArrowLeft') {
-        setActiveTab(prev => (prev - 1 + 3) % 3);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  // Keyboard navigation is now handled locally on the container for better focus control
+
 
   // Data Aggregation for Charts
   const categoryData = useMemo(() => {
@@ -115,11 +105,8 @@ export function FinanceGrid() {
   }
 
   return (
-    <div className="finance-grid" onKeyDown={(e) => {
-      // Accessibility: Also allow arrow keys when focusing the grid
-      if (e.key === 'ArrowRight') setActiveTab(p => (p + 1) % 3);
-      if (e.key === 'ArrowLeft') setActiveTab(p => (p - 1 + 3) % 3);
-    }}>
+    <div className="finance-grid">
+
       {/* Wealth Summary (50-50 Weightage Design) */}
       <div className="bento-item wealth-area glass-panel animate-scale-in">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -217,7 +204,15 @@ export function FinanceGrid() {
       </div>
 
       {/* Expense Intelligence (Gmail Synced Ledger / Visuals) */}
-      <div className="bento-item sub-area glass-panel animate-scale-in delay-200" style={{ display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
+      <div 
+        className="bento-item sub-area glass-panel animate-scale-in delay-200" 
+        style={{ display: 'flex', flexDirection: 'column', minHeight: '400px', outline: 'none' }}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowRight') setActiveTab(p => (p + 1) % 3);
+          if (e.key === 'ArrowLeft') setActiveTab(p => (p - 1 + 3) % 3);
+        }}
+      >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <h3 style={{ fontSize: '1.25rem', margin: 0, whiteSpace: 'nowrap' }}>📊 Expense Intelligence</h3>
@@ -423,7 +418,6 @@ export function FinanceGrid() {
         
         <div style={{ marginTop: '1rem', fontSize: '0.6rem', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'center', gap: '1rem', opacity: 0.5 }}>
            <span>💡 Use Arrow Keys to switch views</span>
-           <span>🍿 New Entertainment class added</span>
         </div>
       </div>
 
