@@ -4,145 +4,427 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getRobustModel, parseAIJson } from "@/lib/gemini";
+import {
+  classifyExpense,
+  extractAmount,
+  extractPaymentMode,
+  isLikelyExpense,
+  isRefundOrCredit,
+  looksRecurring,
+  ExpenseCategory,
+} from "@/lib/expenseClassifier";
+import { filterUnprocessed, markProcessed } from "@/lib/dedup";
 
-export async function POST(req: Request) {
+export const dynamic = "force-dynamic";
+
+const ALLOWED_CATEGORIES: ExpenseCategory[] = [
+  "Food",
+  "Groceries",
+  "Travel",
+  "Bills",
+  "Shopping",
+  "Entertainment",
+  "Subscription",
+  "Investment",
+  "Health",
+  "Transfer",
+  "Other",
+];
+
+/**
+ * POST /api/finance/sync
+ *
+ * Two-stage expense classification pipeline:
+ *
+ *   Stage 1 (deterministic): scan each financial email against the merchant
+ *   map in `expenseClassifier.ts`. Obvious Swiggy / Uber / Netflix / etc.
+ *   transactions are categorised immediately with high confidence — no AI
+ *   tokens spent, no risk of the model hallucinating a category.
+ *
+ *   Stage 2 (AI fallback): anything Stage 1 couldn't classify gets batched
+ *   into a single Gemini call with a tight prompt. We validate the output
+ *   against the allowed category enum before persisting.
+ *
+ * All emails — matched, AI-classified, or skipped — are recorded in
+ * `ProcessedEmail` so repeat syncs are free.
+ */
+export async function POST(_req: Request) {
   const session = await getServerSession(authOptions);
   //@ts-ignore
   const accessToken = session?.accessToken;
   const userEmail = session?.user?.email;
 
   if (!accessToken || !userEmail) {
-    return NextResponse.json({ error: "Unauthorized. Please sign in again." }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized. Please sign in again." },
+      { status: 401 }
+    );
   }
 
   try {
     const user = await prisma.user.upsert({
       where: { email: userEmail },
       update: {},
-      create: { 
+      create: {
         email: userEmail,
-        name: session.user?.name || userEmail.split('@')[0],
-      }
+        name: session.user?.name || userEmail.split("@")[0],
+      },
     });
 
-    console.log(`[FinanceSync] Starting sync for user: ${userEmail} (ID: ${user.id})`);
-
-    // 1. Fetch Targeted Gmail Snippets
+    // 1. Pull a broad list of finance-looking messages from the past 45 days.
+    //    We rely on Gmail's own search for the heavy lifting; our classifier
+    //    refines the results.
     const keywords = [
-      "debited", "spent", "paid", "txn", "PhonePe", "GPay", "HDFC", "Axis", "CRED", 
-      "transfer", "payment", "shopping", "order confirmed", "transaction", "amount", "₹",
-      "UPI", "Swiggy", "Zomato", "BookMyShow", "Netflix", "Subscription", "Investment"
+      "debited",
+      "spent",
+      "paid",
+      "txn",
+      "PhonePe",
+      "GPay",
+      "HDFC",
+      "Axis",
+      "ICICI",
+      "SBI",
+      "Kotak",
+      "CRED",
+      "payment",
+      "order confirmed",
+      "invoice",
+      "receipt",
+      "transaction",
+      "₹",
+      "UPI",
+      "Swiggy",
+      "Zomato",
+      "BookMyShow",
+      "Netflix",
+      "Amazon",
+      "Flipkart",
+      "Uber",
+      "Ola",
+      "Subscription",
+      "SIP",
     ].join(" OR ");
-    const query = encodeURIComponent(keywords);
-    
-    const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=100`, {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    });
-    
+    const query = encodeURIComponent(`(${keywords}) newer_than:45d`);
+
+    const listRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=100`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
     if (!listRes.ok) {
-      if (listRes.status === 401) throw new Error("Gmail session expired.");
+      if (listRes.status === 401)
+        throw new Error("Gmail session expired. Sign out and back in.");
       const errorText = await listRes.text();
       throw new Error(`Gmail API Error: ${listRes.status} - ${errorText}`);
     }
 
     const listData = await listRes.json();
-    const messages = listData.messages;
-    
-    if (!messages || messages.length === 0) {
-      console.log("[FinanceSync] No matching financial emails found.");
-      return NextResponse.json({ success: true, count: 0, message: "No potential transactions found in Gmail." });
+    const messages: Array<{ id: string }> = listData.messages || [];
+
+    if (messages.length === 0) {
+      return NextResponse.json({
+        success: true,
+        count: 0,
+        message: "No potential transactions found in Gmail.",
+      });
     }
 
-    // Fetch details for each message (Metadata format to get Context + Subject + Snippet)
+    // 2. Dedup against our persisted memory of processed finance emails.
+    const unseenIds = await filterUnprocessed(
+      user.id,
+      messages.map((m) => m.id),
+      "finance_sync"
+    );
+
+    if (unseenIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        count: 0,
+        message: "All financial emails already synced.",
+      });
+    }
+
+    // 3. Fetch metadata + snippets.
     const emailDetails = await Promise.all(
-      messages.map(async (msg: any) => {
-        const dRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
+      unseenIds.map(async (id) => {
+        const dRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
         if (!dRes.ok) return null;
         const data = await dRes.json();
         const headers = data.payload?.headers || [];
-        const subject = headers.find((h: any) => h.name === 'Subject')?.value || "";
-        const from = headers.find((h: any) => h.name === 'From')?.value || "";
-        const date = headers.find((h: any) => h.name === 'Date')?.value || "";
-        return { id: data.id, snippet: data.snippet, subject, from, date };
+        return {
+          id: data.id as string,
+          snippet: (data.snippet as string) || "",
+          subject:
+            (headers.find((h: any) => h.name === "Subject")?.value as string) || "",
+          from:
+            (headers.find((h: any) => h.name === "From")?.value as string) || "",
+          date:
+            (headers.find((h: any) => h.name === "Date")?.value as string) || "",
+        };
       })
     );
+    const valid = emailDetails.filter((e): e is NonNullable<typeof e> => !!e);
 
-    const validDetails = emailDetails.filter(e => e !== null);
-    console.log(`[FinanceSync] Processing ${validDetails.length} emails with AI...`);
-
-    // 2. AI Parsing - Extract Finance Data
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
-
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = await getRobustModel(genAI);
-
-    const prompt = `
-      You are a specialized Finance Extraction AI. Analyze these Gmail alerts and extract financial DEBIT transactions.
-      
-      RULES:
-      1. Only extract genuine expenses (money debited, spent, or shopping orders).
-      2. IGNORE refunds, OTPs, login alerts, or credit/deposit alerts.
-      3. Categorize exactly as: "Food", "Travel", "Bills", "Shopping", "Entertainment", "Investment", "Health", "Other".
-      4. MERCHANT: Identify the specific shop, app (e.g., Zomato, BookMyShow, Amazon, Uber), or bank/biller.
-      
-      IMPORTANT:
-      - Return a JSON array. 
-      - Use the provided [Gmail ID] as sourceId.
-      - If NO transactions are found, return exactly [].
-      
-      OUTPUT FORMAT: [{"merchant": "...", "amount": 123.45, "category": "...", "date": "YYYY-MM-DD", "sourceId": "..."}]
-      
-      EMAIL DATA:
-      ${validDetails.map(e => `[Gmail ID: ${e.id}] FROM: ${e.from} | DATE: ${e.date} | SUBJECT: ${e.subject} | SNIPPET: ${e.snippet}`).join("\n")}
-    `;
-
-    const result = await model.generateContent(prompt);
-    const text = await result.response.text();
-    const extractedExpenses = parseAIJson(text);
-    
-    console.log(`[FinanceSync] AI identified ${extractedExpenses.length} transactions.`);
-
-    // 3. Upsert into Database
-    let syncCount = 0;
-    for (const exp of extractedExpenses) {
-      if (!exp.amount || !exp.merchant || !exp.sourceId) continue;
-      
-      try {
-        await prisma.expense.upsert({
-          where: { sourceId: exp.sourceId },
-          update: {}, 
-          create: {
-            amount: parseFloat(exp.amount),
-            merchant: exp.merchant,
-            category: exp.category || "Bills",
-            date: new Date(exp.date || new Date()),
-            sourceId: exp.sourceId,
-            sourceType: "GMAIL",
-            userId: user.id
-          }
+    // 4. Pre-filter with heuristics. Refunds / OTPs / newsletters are marked
+    //    "ignored" and never reach the AI.
+    const candidates: typeof valid = [];
+    for (const em of valid) {
+      const blob = `${em.from} ${em.subject} ${em.snippet}`;
+      if (isRefundOrCredit(blob) || !isLikelyExpense(blob)) {
+        await markProcessed({
+          userId: user.id,
+          emailId: em.id,
+          purpose: "finance_sync",
+          outcome: "ignored",
+          subject: em.subject,
+          snippet: em.snippet,
         });
-        syncCount++;
-      } catch (e) {
-        console.warn(`[FinanceSync] Failed to upsert ${exp.sourceId}:`, e);
+        continue;
+      }
+      candidates.push(em);
+    }
+
+    if (candidates.length === 0) {
+      return NextResponse.json({
+        success: true,
+        count: 0,
+        message: "No new expenses detected (filtered as refunds/notifications).",
+      });
+    }
+
+    // 5. Stage 1: deterministic rule-based classification.
+    const priorExpenses = await prisma.expense.findMany({
+      where: { userId: user.id },
+      select: { merchant: true, amount: true, date: true },
+      orderBy: { date: "desc" },
+      take: 200,
+    });
+
+    type Prepared = {
+      email: (typeof candidates)[number];
+      amount: number;
+      paymentMode: string | null;
+      classified?: {
+        category: ExpenseCategory;
+        subcategory?: string;
+        merchant?: string;
+        confidence: number;
+        method: "rule" | "keyword" | "ai";
+      };
+    };
+
+    const prepared: Prepared[] = [];
+    const needsAi: Prepared[] = [];
+
+    for (const em of candidates) {
+      const blob = `${em.from} ${em.subject} ${em.snippet}`;
+      const amount = extractAmount(blob);
+      if (!amount) {
+        // No parseable amount → not an expense row we can persist.
+        await markProcessed({
+          userId: user.id,
+          emailId: em.id,
+          purpose: "finance_sync",
+          outcome: "ignored",
+          subject: em.subject,
+          snippet: em.snippet,
+        });
+        continue;
+      }
+
+      const rule = classifyExpense({
+        from: em.from,
+        subject: em.subject,
+        snippet: em.snippet,
+      });
+      const paymentMode = extractPaymentMode(blob);
+
+      const entry: Prepared = { email: em, amount, paymentMode };
+
+      if (rule.method === "rule" && rule.confidence >= 0.85) {
+        entry.classified = {
+          category: rule.category,
+          subcategory: rule.subcategory,
+          merchant: rule.merchant,
+          confidence: rule.confidence,
+          method: "rule",
+        };
+        prepared.push(entry);
+      } else if (rule.method === "keyword" && rule.confidence >= 0.55) {
+        entry.classified = {
+          category: rule.category,
+          subcategory: rule.subcategory,
+          merchant: rule.merchant,
+          confidence: rule.confidence,
+          method: "keyword",
+        };
+        prepared.push(entry);
+        needsAi.push(entry); // AI can refine merchant name, but we'll keep rule category.
+      } else {
+        needsAi.push(entry);
+        prepared.push(entry);
       }
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      count: syncCount, 
-      message: `Successfully synced ${syncCount} transactions from Gmail.` 
-    });
+    // 6. Stage 2: AI fills in what rules missed. Single batched call.
+    if (needsAi.length > 0) {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = await getRobustModel(genAI);
 
+      const aiPrompt = `
+You are a specialised Finance Extraction AI for an Indian user. For each email below, return a JSON object describing the expense.
+
+STRICT RULES:
+- Only output real DEBIT transactions. Ignore refunds, OTPs, login alerts, promos.
+- Categories MUST be one of: ${ALLOWED_CATEGORIES.join(", ")}.
+- Pick the most specific category (e.g. "Subscription" for Netflix, not "Entertainment"; "Groceries" for Blinkit, not "Food").
+- Merchant should be the specific app/shop/biller ("Swiggy", "Uber", "Airtel"). Never return the bank as the merchant.
+- date must be YYYY-MM-DD (fall back to the email Date header if no explicit date is in the body).
+
+OUTPUT: JSON ARRAY, one object per input:
+[{"sourceId": "...", "merchant": "...", "category": "...", "subcategory": "...", "date": "YYYY-MM-DD"}]
+
+EMAILS:
+${needsAi
+  .map(
+    (p) =>
+      `[ID: ${p.email.id}] FROM: ${p.email.from} | DATE: ${p.email.date} | SUBJECT: ${p.email.subject} | SNIPPET: ${p.email.snippet}`
+  )
+  .join("\n")}
+`.trim();
+
+      try {
+        const result = await model.generateContent(aiPrompt);
+        const text = await result.response.text();
+        const aiArr: any[] = parseAIJson(text);
+        const byId = new Map<string, any>();
+        for (const a of aiArr) if (a?.sourceId) byId.set(a.sourceId, a);
+
+        for (const entry of needsAi) {
+          const ai = byId.get(entry.email.id);
+          if (!ai) continue;
+          const cat = ALLOWED_CATEGORIES.includes(ai.category)
+            ? (ai.category as ExpenseCategory)
+            : "Other";
+
+          // Prefer rule category when it exists — AI only fills merchant/subcategory.
+          const existing = entry.classified;
+          entry.classified = {
+            category: existing?.category && existing.method === "rule" ? existing.category : cat,
+            subcategory: ai.subcategory || existing?.subcategory,
+            merchant: ai.merchant || existing?.merchant,
+            confidence: existing?.method === "rule" ? existing.confidence : 0.75,
+            method: existing?.method === "rule" ? existing.method : "ai",
+          };
+        }
+      } catch (e) {
+        console.warn("[finance/sync] AI stage failed, falling back to rule categories", e);
+      }
+    }
+
+    // 7. Persist. We also detect subscriptions by recurrence regardless of
+    //    what the classifier said — if the same merchant+amount shows up
+    //    monthly, it's a subscription.
+    let syncCount = 0;
+    for (const entry of prepared) {
+      const c = entry.classified;
+      if (!c) {
+        await markProcessed({
+          userId: user.id,
+          emailId: entry.email.id,
+          purpose: "finance_sync",
+          outcome: "ignored",
+          subject: entry.email.subject,
+          snippet: entry.email.snippet,
+        });
+        continue;
+      }
+
+      const merchant = (c.merchant || entry.email.from.split("<")[0].trim() || "Unknown").slice(0, 120);
+
+      // Subscription detection override
+      let finalCategory = c.category;
+      let finalSubcategory = c.subcategory;
+      if (
+        finalCategory !== "Subscription" &&
+        looksRecurring({ merchant, amount: entry.amount }, priorExpenses)
+      ) {
+        finalCategory = "Subscription";
+        finalSubcategory = finalSubcategory || "recurring";
+      }
+
+      try {
+        const saved = await prisma.expense.upsert({
+          where: { sourceId: entry.email.id },
+          update: {
+            amount: entry.amount,
+            merchant,
+            category: finalCategory,
+            subcategory: finalSubcategory,
+            paymentMode: entry.paymentMode,
+            confidence: c.confidence,
+            method: c.method,
+          },
+          create: {
+            amount: entry.amount,
+            merchant,
+            category: finalCategory,
+            subcategory: finalSubcategory,
+            description: entry.email.snippet?.slice(0, 500),
+            paymentMode: entry.paymentMode,
+            confidence: c.confidence,
+            method: c.method,
+            date: parseDate(entry.email.date),
+            sourceId: entry.email.id,
+            sourceType: "GMAIL",
+            userId: user.id,
+          },
+        });
+        syncCount++;
+
+        await markProcessed({
+          userId: user.id,
+          emailId: entry.email.id,
+          purpose: "finance_sync",
+          outcome: "expense",
+          externalRef: saved.id,
+          subject: entry.email.subject,
+          snippet: entry.email.snippet,
+        });
+      } catch (e) {
+        console.warn(`[finance/sync] upsert failed for ${entry.email.id}:`, e);
+        await markProcessed({
+          userId: user.id,
+          emailId: entry.email.id,
+          purpose: "finance_sync",
+          outcome: "error",
+          subject: entry.email.subject,
+          snippet: entry.email.snippet,
+        });
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      count: syncCount,
+      message: `Synced ${syncCount} transactions (${prepared.length} candidates, ${needsAi.length} used AI).`,
+    });
   } catch (error: any) {
     console.error("[FinanceSync] ERROR:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
-export async function GET(req: Request) {
+/**
+ * GET /api/finance/sync — list saved expenses for the current user.
+ */
+export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     const userEmail = session?.user?.email;
@@ -153,11 +435,18 @@ export async function GET(req: Request) {
 
     const expenses = await prisma.expense.findMany({
       where: { userId: user.id },
-      orderBy: { date: 'desc' }
+      orderBy: { date: "desc" },
+      take: 250,
     });
 
     return NextResponse.json({ expenses });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
+}
+
+function parseDate(raw?: string): Date {
+  if (!raw) return new Date();
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? new Date() : d;
 }

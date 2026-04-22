@@ -178,53 +178,102 @@ export async function POST(req: Request) {
              await ZomatoBridge.addToCart(userObj.id, cmd.restaurant, cmd.items);
              executionMessages.push(`🛒 Cart drafted at **${cmd.restaurant}** with: ${cmd.items.join(", ")}. Follow the link in the Food panel to checkout!`);
           } else if (cmd.action.includes("event") && accessToken) {
-             // 1. Calendar Conflict Check
+             // --- Calendar create/update/delete ---
+             // Duplicate-prevention strategy:
+             //   1. For create_event we query a tight time window around the
+             //      requested start/end and reject if an exact (or nearly
+             //      exact) summary match already exists.
+             //   2. We also tag created events with
+             //      extendedProperties.private.chatIdempotencyKey so a retried
+             //      message never produces a second event.
              const startDT = formatTime(cmd.startTime);
              const endDT = formatTime(cmd.endTime || cmd.startTime);
-             
-             // Google timeMax is exclusive. If start == end, the window is zero-width and might return 0 results.
-             // We expand the search window by 1 minute to ensure we catch the event start.
-             let searchEnd = endDT;
-             if (startDT === endDT) {
-               const d = new Date(startDT);
-               d.setMinutes(d.getMinutes() + 1);
-               searchEnd = d.toISOString();
-             }
 
-             const timeMin = encodeURIComponent(startDT);
-             const timeMax = encodeURIComponent(searchEnd);
-             
-             const conflictsRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${timeMin}&timeMax=${timeMax}&q=${encodeURIComponent(cmd.summary)}`, {
-               headers: { "Authorization": `Bearer ${accessToken}` }
-             });
-             
-             if (conflictsRes.ok) {
-               const conflicts = await conflictsRes.json();
-               // Manually verify exact title match to avoid fuzzy false positives from 'q'
-               const exactMatch = conflicts.items?.find((ev: any) => 
-                 ev.summary?.toLowerCase().trim() === cmd.summary?.toLowerCase().trim()
-               );
-               
-               if (exactMatch) {
-                 executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists at this time.`);
-                 continue; 
+             if (cmd.action === "create_event") {
+               // Expand window by ±5 minutes so small LLM drift still finds the existing event.
+               const startMs = new Date(startDT).getTime();
+               const endMs = new Date(endDT).getTime();
+               const searchMin = new Date(startMs - 5 * 60_000).toISOString();
+               const searchMax = new Date(Math.max(endMs, startMs) + 5 * 60_000).toISOString();
+
+               const idemKey = `${userEmail}|${(cmd.summary || "").toLowerCase().trim()}|${startDT}`;
+               const listUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(searchMin)}&timeMax=${encodeURIComponent(searchMax)}&singleEvents=true&privateExtendedProperty=${encodeURIComponent(`chatIdempotencyKey=${idemKey}`)}`;
+
+               const conflictsRes = await fetch(listUrl, {
+                 headers: { Authorization: `Bearer ${accessToken}` }
+               });
+
+               if (conflictsRes.ok) {
+                 const conflicts = await conflictsRes.json();
+                 if ((conflicts.items || []).length > 0) {
+                   executionMessages.push(`⚠️ Calendar: "${cmd.summary}" was already created earlier — skipping duplicate.`);
+                   continue;
+                 }
                }
-             }
 
-             const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events" + (cmd.action !== "create_event" ? `/${cmd.eventId}` : ""), {
-               method: cmd.action === "create_event" ? "POST" : (cmd.action === "update_event" ? "PATCH" : "DELETE"),
-               headers: { "Authorization": `Bearer ${accessToken}`, "Content-Type": "application/json" },
-               body: cmd.action !== "delete_event" ? JSON.stringify({ 
-                 summary: cmd.summary, 
-                 start: { dateTime: formatTime(cmd.startTime), timeZone: "Asia/Kolkata" }, 
-                 end: { dateTime: formatTime(cmd.endTime || cmd.startTime), timeZone: "Asia/Kolkata" } 
-               }) : undefined
-             });
-             if (res.ok) { executionMessages.push(`📅 Calendar updated: ${cmd.summary || cmd.eventId}`); calendarMutated = true; }
-             else {
-               const errJson = await res.json().catch(() => ({}));
-               console.error("Google Calendar API Error:", res.status, errJson);
-               executionMessages.push(`❌ Failed to update calendar: ${errJson.error?.message || "Google API error"}`);
+               // Secondary check: same-title, overlapping-time events that
+               // weren't created by us (e.g. user already had the meeting).
+               const overlapUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(searchMin)}&timeMax=${encodeURIComponent(searchMax)}&singleEvents=true`;
+               const overlapRes = await fetch(overlapUrl, {
+                 headers: { Authorization: `Bearer ${accessToken}` }
+               });
+               if (overlapRes.ok) {
+                 const overlap = await overlapRes.json();
+                 const exactMatch = (overlap.items || []).find((ev: any) =>
+                   ev.summary?.toLowerCase().trim() === (cmd.summary || "").toLowerCase().trim()
+                 );
+                 if (exactMatch) {
+                   executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists at this time.`);
+                   continue;
+                 }
+               }
+
+               const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+                 method: "POST",
+                 headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+                 body: JSON.stringify({
+                   summary: cmd.summary,
+                   start: { dateTime: startDT, timeZone: "Asia/Kolkata" },
+                   end: { dateTime: endDT, timeZone: "Asia/Kolkata" },
+                   extendedProperties: {
+                     private: {
+                       chatIdempotencyKey: idemKey,
+                       source: "command_center_chat"
+                     }
+                   }
+                 })
+               });
+               if (res.ok) {
+                 executionMessages.push(`📅 Calendar: created "${cmd.summary}"`);
+                 calendarMutated = true;
+               } else {
+                 const errJson = await res.json().catch(() => ({}));
+                 console.error("Google Calendar API Error:", res.status, errJson);
+                 executionMessages.push(`❌ Failed to create event: ${errJson.error?.message || "Google API error"}`);
+               }
+             } else {
+               // update_event / delete_event
+               if (!cmd.eventId) {
+                 executionMessages.push(`❌ ${cmd.action} requires an eventId.`);
+                 continue;
+               }
+               const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${cmd.eventId}`, {
+                 method: cmd.action === "update_event" ? "PATCH" : "DELETE",
+                 headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+                 body: cmd.action === "update_event" ? JSON.stringify({
+                   summary: cmd.summary,
+                   start: cmd.startTime ? { dateTime: startDT, timeZone: "Asia/Kolkata" } : undefined,
+                   end: cmd.endTime ? { dateTime: endDT, timeZone: "Asia/Kolkata" } : undefined,
+                 }) : undefined
+               });
+               if (res.ok) {
+                 executionMessages.push(`📅 Calendar ${cmd.action === "update_event" ? "updated" : "deleted"}: ${cmd.summary || cmd.eventId}`);
+                 calendarMutated = true;
+               } else {
+                 const errJson = await res.json().catch(() => ({}));
+                 console.error("Google Calendar API Error:", res.status, errJson);
+                 executionMessages.push(`❌ Failed to ${cmd.action}: ${errJson.error?.message || "Google API error"}`);
+               }
              }
           } else if (cmd.action.includes("task")) {
              const userObj = await prisma.user.upsert({

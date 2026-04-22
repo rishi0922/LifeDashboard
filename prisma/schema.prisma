@@ -9,19 +9,20 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  points        Int       @default(0)
-  tier          String    @default("Bronze")
-  streak        Int       @default(0)
-  tasks         Task[]
-  notes         Note[]
-  foodOrders    FoodOrder[]
-  preferences   UserPreference[]
-  expenses      Expense[]
+  id              String    @id @default(cuid())
+  name            String?
+  email           String?   @unique
+  emailVerified   DateTime?
+  image           String?
+  points          Int       @default(0)
+  tier            String    @default("Bronze")
+  streak          Int       @default(0)
+  tasks           Task[]
+  notes           Note[]
+  foodOrders      FoodOrder[]
+  preferences     UserPreference[]
+  expenses        Expense[]
+  processedEmails ProcessedEmail[]
 }
 
 model Task {
@@ -77,10 +78,37 @@ model Expense {
   id          String   @id @default(cuid())
   amount      Float
   merchant    String
-  category    String   // Food, Travel, Bills, Shopping
+  category    String   // Food, Travel, Bills, Shopping, Entertainment, Investment, Health, Groceries, Subscription, Transfer, Other
+  subcategory String?  // dining_out, ride_hailing, ott_subscription, utility_bill, upi_transfer, etc.
+  description String?  // Original email snippet / manual note
+  paymentMode String?  // UPI, CARD, NETBANKING, CASH, WALLET
+  confidence  Float?   // 0..1 classifier confidence
+  method      String?  // "rule" | "ai" | "manual" — how this was categorized
   date        DateTime @default(now())
   sourceId    String?  @unique
-  sourceType  String?   // GMAIL
+  sourceType  String?  // GMAIL, MANUAL
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@index([userId, category])
+}
+
+/// Persistent record of every Gmail message we've touched, so repeat syncs
+/// never re-process the same email. This is the backbone of idempotency for
+/// both the calendar-event pipeline and the expense-extraction pipeline.
+model ProcessedEmail {
+  id          String   @id @default(cuid())
+  emailId     String   // Gmail message ID
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose     String   // "inbox_sync" | "finance_sync"
+  outcome     String   // "task" | "event" | "expense" | "ignored" | "error"
+  externalRef String?  // Google Calendar event ID, Task ID, or Expense ID
+  subject     String?
+  snippet     String?
+  processedAt DateTime @default(now())
+
+  @@unique([userId, emailId, purpose])
+  @@index([userId, processedAt])
 }
