@@ -57,6 +57,29 @@ function isIPLSeries(name: string): boolean {
     (n.includes("premier league") && n.includes("india"));
 }
 
+function MatchIcon({ status, isLive }: { status: string; isLive: boolean }) {
+  const s = status.toLowerCase();
+  
+  if (s.includes("rain") || s.includes("delay")) {
+    return (
+      <span style={{ fontSize: '1.2rem', animation: 'rain-shake 0.5s ease-in-out infinite' }}>
+        🌧️
+      </span>
+    );
+  }
+  
+  if (s.includes("timeout")) {
+    return (
+      <span style={{ fontSize: '1.2rem', animation: 'timeout-spin 3s linear infinite' }}>
+        ⏱️
+      </span>
+    );
+  }
+
+  if (isLive) return null;
+  return <span style={{ fontSize: '1rem' }}>🏏</span>;
+}
+
 export function IPLScoreTicker() {
   const [matches, setMatches] = useState<IPLMatch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,7 +109,6 @@ export function IPLScoreTicker() {
         const score2 = t2.score || "";
 
         const statusStr = m.status?.type?.detail || "Upcoming";
-        // 'in' means currently live, 'pre' means upcoming, 'post' means finished
         const isLive = m.status?.type?.state === "in";
 
         newMatches.push({
@@ -109,7 +131,6 @@ export function IPLScoreTicker() {
 
   useEffect(() => {
     fetchScores();
-    // Refresh every 30s during live matches
     const interval = setInterval(fetchScores, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -168,7 +189,7 @@ export function IPLScoreTicker() {
                 height: '6px',
                 borderRadius: '50%',
                 background: '#ef4444',
-                animation: 'pulse 1.5s ease-in-out infinite',
+                animation: 'pulse-live 1.5s ease-in-out infinite',
                 boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)'
               }} />
               <span style={{
@@ -181,8 +202,8 @@ export function IPLScoreTicker() {
             </div>
           )}
 
-          {/* Cricket emoji */}
-          <span style={{ fontSize: '1rem' }}>🏏</span>
+          {/* Dynamic Match Icon */}
+          <MatchIcon status={match.status} isLive={match.isLive} />
 
           {/* Match info - compact single line */}
           <div style={{
@@ -271,9 +292,19 @@ export function IPLScoreTicker() {
       ) : null}
 
       <style jsx>{`
-        @keyframes tickerSlide {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+        @keyframes pulse-live {
+          0% { transform: scale(0.95); opacity: 0.7; }
+          50% { transform: scale(1.15); opacity: 1; }
+          100% { transform: scale(0.95); opacity: 0.7; }
+        }
+        @keyframes rain-shake {
+          0%, 100% { transform: translateY(0) translateX(0); }
+          25% { transform: translateY(1px) translateX(-0.5px); }
+          75% { transform: translateY(1.5px) translateX(0.5px); }
+        }
+        @keyframes timeout-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

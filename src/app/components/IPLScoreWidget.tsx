@@ -79,6 +79,29 @@ async function fetchLiveMatches(): Promise<IPLMatch[]> {
   return [];
 }
 
+function MatchIcon({ status, isLive }: { status: string; isLive: boolean }) {
+  const s = status.toLowerCase();
+  
+  if (s.includes("rain") || s.includes("delay")) {
+    return (
+      <span style={{ fontSize: '1rem', animation: 'rain-shake 0.5s ease-in-out infinite' }}>
+        🌧️
+      </span>
+    );
+  }
+  
+  if (s.includes("timeout")) {
+    return (
+      <span style={{ fontSize: '1rem', animation: 'timeout-spin 3s linear infinite' }}>
+        ⏱️
+      </span>
+    );
+  }
+
+  if (isLive) return null;
+  return <span style={{ fontSize: '0.85rem' }}>🏏</span>;
+}
+
 export function IPLScoreWidget() {
   const [matches, setMatches] = useState<IPLMatch[]>([]);
   const [idx, setIdx] = useState(0);
@@ -118,7 +141,7 @@ export function IPLScoreWidget() {
       maxWidth: '310px',
       transition: 'all 0.4s ease',
     }}>
-      <span style={{ fontSize: '0.85rem', flexShrink: 0 }}>🏏</span>
+      <MatchIcon status={m?.status || ""} isLive={isLive} />
 
       {loading ? (
         <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
@@ -175,6 +198,22 @@ export function IPLScoreWidget() {
           )}
         </div>
       )}
+
+      <style jsx>{`
+        @keyframes rain-shake {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(2px); }
+        }
+        @keyframes timeout-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+          0% { transform: scale(0.95); opacity: 0.7; }
+          50% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(0.95); opacity: 0.7; }
+        }
+      `}</style>
     </div>
   );
 }
