@@ -1,9 +1,31 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Returns the signed-in user (upserting if needed).
+ * Falls back to the first user only when nobody is logged in — this is
+ * important because /api/gmail/sync writes tasks under session.user.email,
+ * while the previous findFirst() often returned a stale dev user
+ * ("dummy@local.dev") making the Priorities panel look empty even though
+ * tasks existed for the real user.
+ */
 async function getOrCreateUser() {
+  const session = await getServerSession(authOptions);
+  const email = session?.user?.email;
+  if (email) {
+    return prisma.user.upsert({
+      where: { email },
+      update: {},
+      create: {
+        email,
+        name: session.user?.name || email.split("@")[0],
+      },
+    });
+  }
   let user = await prisma.user.findFirst();
   if (!user) user = await prisma.user.create({ data: { name: "Chief", email: "dummy@local.dev" }});
   return user;

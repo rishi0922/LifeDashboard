@@ -208,13 +208,25 @@ export async function POST(req: Request) {
              const endDT = formatTime(cmd.endTime || cmd.startTime);
 
              if (cmd.action === "create_event") {
-               // Expand window by ±5 minutes so small LLM drift still finds the existing event.
                const startMs = new Date(startDT).getTime();
                const endMs = new Date(endDT).getTime();
-               const searchMin = new Date(startMs - 5 * 60_000).toISOString();
-               const searchMax = new Date(Math.max(endMs, startMs) + 5 * 60_000).toISOString();
 
-               const idemKey = `${userEmail}|${(cmd.summary || "").toLowerCase().trim()}|${startDT}`;
+               // Idempotency key — bucket the start time to the nearest 15 min
+               // so if the LLM regenerates the same request with seconds drift
+               // (e.g. "15:00:00" vs "15:00:30") we still see it as the same
+               // event. Previous version used the raw ISO string which meant
+               // even 1-second drift created a fresh duplicate.
+               const bucketMs = 15 * 60_000;
+               const roundedStart = Math.floor(startMs / bucketMs) * bucketMs;
+               const normTitle = (cmd.summary || "").toLowerCase().replace(/\s+/g, " ").trim();
+               const idemKey = `${userEmail}|${normTitle}|${roundedStart}`;
+
+               // Widen the search window to ±30 minutes to catch the same
+               // meeting a user might have phrased as "3pm" once and
+               // "3:15pm" the next time.
+               const searchMin = new Date(startMs - 30 * 60_000).toISOString();
+               const searchMax = new Date(Math.max(endMs, startMs) + 30 * 60_000).toISOString();
+
                const listUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(searchMin)}&timeMax=${encodeURIComponent(searchMax)}&singleEvents=true&privateExtendedProperty=${encodeURIComponent(`chatIdempotencyKey=${idemKey}`)}`;
 
                const conflictsRes = await fetch(listUrl, {
@@ -229,16 +241,21 @@ export async function POST(req: Request) {
                  }
                }
 
-               // Secondary check: same-title, overlapping-time events that
-               // weren't created by us (e.g. user already had the meeting).
+               // Secondary check: same-title (fuzzy), overlapping-time events.
+               // We normalise both sides (lowercase, collapse whitespace,
+               // strip the "✨" prefix Gmail-sync adds) so a chat event and a
+               // Gmail-sync event for the same meeting don't both get created.
                const overlapUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(searchMin)}&timeMax=${encodeURIComponent(searchMax)}&singleEvents=true`;
                const overlapRes = await fetch(overlapUrl, {
                  headers: { Authorization: `Bearer ${accessToken}` }
                });
                if (overlapRes.ok) {
                  const overlap = await overlapRes.json();
+                 const norm = (s: string) =>
+                   (s || "").toLowerCase().replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\s]+/u, "")
+                     .replace(/\s+/g, " ").trim();
                  const exactMatch = (overlap.items || []).find((ev: any) =>
-                   ev.summary?.toLowerCase().trim() === (cmd.summary || "").toLowerCase().trim()
+                   norm(ev.summary || "") === norm(cmd.summary || "")
                  );
                  if (exactMatch) {
                    executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists at this time.`);
