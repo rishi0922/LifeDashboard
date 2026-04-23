@@ -458,10 +458,10 @@ export function FinanceGrid() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
               <span>🏍️ Triumph Speed 400</span>
-              <span style={{ fontWeight: 700 }}>75%</span>
+              <span style={{ fontWeight: 700 }}>45%</span>
             </div>
             <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ width: '75%', height: '100%', background: 'var(--accent-color)' }}></div>
+              <div style={{ width: '45%', height: '100%', background: 'var(--accent-color)' }}></div>
             </div>
           </div>
           <div>
@@ -479,9 +479,14 @@ export function FinanceGrid() {
       <style jsx>{`
         .finance-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: auto 300px;
-          grid-template-areas: 
+          /* Expense Intelligence needs room for its tabs (LIST/PIE/BAR) + a
+             240px pie chart, so we give it 2.6fr. Goal Milestones only holds
+             two progress bars so 0.8fr is plenty. Market stays at 2fr to match
+             the visual weight on the right. Row 2 is 460px so the pie
+             renders fully with no overflow scroll. */
+          grid-template-columns: 2.6fr 0.8fr 2fr;
+          grid-template-rows: auto 460px;
+          grid-template-areas:
             "wealth wealth market"
             "sub goals market";
           gap: 2rem;
