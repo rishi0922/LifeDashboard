@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { fetchGmailSnippets, sendGmailReply } from "@/lib/gmail";
+import { fetchGmailSnippets, sendGmailReply, sendGmailNew } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
 
 export const dynamic = "force-dynamic";
@@ -123,6 +123,8 @@ export async function POST(req: Request) {
       * IMPORTANT: eventId MUST come verbatim from the [ID: ...] prefix in the CALENDAR context above. Never invent IDs, never use summaries as IDs. If the user asks to clear / remove / delete multiple events (e.g. "before 8am"), emit ONE delete_event JSON block per matching event.
       - Reply to email: {"action": "reply_email", "emailId": "GMAIL_MSG_ID", "body": "Your reply text"}
       * IMPORTANT: emailId MUST be a real Gmail message id pulled from the "RECENT UNREAD EMAILS" block below (or an id you extracted from a previous fetch this session). Write a polite, concise reply body in first person as the user. Keep it under 120 words unless the user asks for more. Never invent emailIds.
+      - Send a NEW email (no existing thread): {"action": "send_email", "to": "person@example.com", "subject": "Subject line", "body": "Your message", "cc": "optional@x.com", "bcc": "optional@y.com"}
+      * Use this whenever the user asks you to email someone and you don't have a pre-existing thread to reply to. "to" must be a valid email address. If the user only gives a name (e.g. "email rishi about the demo"), ASK for the address instead of guessing. "cc" and "bcc" are optional — omit them entirely if not specified. Write a polite, first-person body signed as the user, with a clear subject line.
       - Create Task: {"action": "create_task", "title": "...", "category": "Work" | "Personal" | "Urgent", "sourceId": "GMAIL_MSG_ID_IF_APPLICABLE"}
       - Update/Delete Task: {"action": "update_task", "taskId": "ID", "status": "DONE"}, {"action": "delete_task", "taskId": "ID"}
       - Food Order: {"action": "create_food_order", "restaurant": "...", "items": "...", "cost": 0.0, "etaMinutes": 25}
@@ -208,6 +210,33 @@ export async function POST(req: Request) {
              });
              const suggestion = await ZomatoBridge.suggestBestOption(userObj.id, cmd.preference || "Best Value");
              executionMessages.push(`🔍 Zomato Scout found: **${suggestion.name}** (${suggestion.eta}m, ⭐${suggestion.rating}). Should I prepare a cart?`);
+          } else if (cmd.action === "send_email" && accessToken) {
+             // Fresh email (new thread) — caller supplies to/subject/body.
+             // We don't try to validate beyond "to looks like an email"; the
+             // helper handles edge cases and structured errors.
+             if (!cmd.to || !cmd.subject || !cmd.body) {
+               executionMessages.push(`❌ send_email needs to, subject, and body.`);
+             } else {
+               const sendRes = await sendGmailNew({
+                 accessToken,
+                 to: String(cmd.to),
+                 subject: String(cmd.subject),
+                 body: String(cmd.body),
+                 cc: cmd.cc ? String(cmd.cc) : undefined,
+                 bcc: cmd.bcc ? String(cmd.bcc) : undefined,
+               });
+               if (sendRes.ok) {
+                 executionMessages.push(`✉️ Sent email to ${cmd.to} — subject: "${cmd.subject}".`);
+               } else if (sendRes.status === 403) {
+                 executionMessages.push(
+                   `❌ Can't send emails on this session. Sign out and sign back in so Google re-consents to the gmail.send scope.`
+                 );
+               } else {
+                 executionMessages.push(
+                   `❌ Send failed: ${sendRes.error || "Unknown error"}`
+                 );
+               }
+             }
           } else if (cmd.action === "reply_email" && accessToken) {
              // Gmail reply action — the AI must provide a real Gmail message
              // id (surfaced as [EMAIL_ID: ...] in the gmailContext block) and

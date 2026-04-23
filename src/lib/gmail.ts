@@ -118,6 +118,88 @@ export async function sendGmailReply(params: {
   }
 }
 
+/**
+ * Sends a brand-new email (not a reply to an existing thread).
+ *
+ * Unlike sendGmailReply there's no source message to pull Subject /
+ * In-Reply-To from — the caller provides To, Subject, and Body directly.
+ * We still use users.messages.send, just without threadId, so Gmail starts
+ * a fresh conversation.
+ *
+ * Requires the `gmail.send` OAuth scope. Existing sessions signed in before
+ * that scope was added get 403 until they re-consent.
+ */
+export async function sendGmailNew(params: {
+  accessToken: string;
+  to: string;
+  subject: string;
+  body: string;
+  cc?: string;
+  bcc?: string;
+}): Promise<GmailReplyResult> {
+  const { accessToken, to, subject, body, cc, bcc } = params;
+  try {
+    // Basic sanity check — Gmail will 400 on obvious junk, but catching it
+    // early gives a friendlier error in chat.
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!to || !emailRe.test(to.trim())) {
+      return { ok: false, error: `Invalid recipient email: "${to}"` };
+    }
+    if (!subject?.trim()) {
+      return { ok: false, error: "Subject is required." };
+    }
+    if (!body?.trim()) {
+      return { ok: false, error: "Body is required." };
+    }
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 15_000);
+    try {
+      const rfc2822Lines = [
+        `To: ${to}`,
+        cc ? `Cc: ${cc}` : "",
+        bcc ? `Bcc: ${bcc}` : "",
+        `Subject: ${subject}`,
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain; charset=UTF-8",
+        "",
+        body,
+      ].filter(Boolean);
+      const raw = base64UrlEncode(rfc2822Lines.join("\r\n"));
+
+      const sendRes = await fetch(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ raw }),
+          signal: ac.signal,
+        }
+      );
+      if (!sendRes.ok) {
+        const errJson = await sendRes.json().catch(() => ({}));
+        return {
+          ok: false,
+          status: sendRes.status,
+          error: errJson.error?.message || "Gmail send failed",
+        };
+      }
+      const sent = await sendRes.json();
+      return { ok: true, id: sent.id, threadId: sent.threadId };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Gmail request timed out after 15s." };
+    }
+    return { ok: false, error: err?.message || "Unknown send error" };
+  }
+}
+
 export async function fetchGmailSnippets(accessToken: string) {
   try {
     // 1. List unread messages
