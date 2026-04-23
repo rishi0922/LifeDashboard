@@ -9,6 +9,7 @@ interface IPLMatch {
   score2: string;
   status: string;
   isLive: boolean;
+  isFinished: boolean;
 }
 
 const IPL_TEAMS = new Set([
@@ -58,8 +59,17 @@ async function fetchLiveMatches(): Promise<IPLMatch[]> {
         const score1 = t1.score || "";
         const score2 = t2.score || "";
 
-        const statusStr = m.status?.type?.detail || "Upcoming";
-        const isLive = m.status?.type?.state === "in";
+        const statusType = m.status?.type || {};
+        const statusStr = statusType.detail || statusType.description || "Upcoming";
+        const state = statusType.state;
+        const isLive = state === "in";
+        // ESPN marks completed games with state "post" (or completed: true).
+        // We also treat result-style status strings (e.g. "CSK won by 5 wickets",
+        // "Match tied", "No result") as finished, so a late-arriving state flag
+        // doesn't keep the ticker on the live layout forever.
+        const finishedByText = /won by|tie|no result|abandoned|match ended|final/i.test(statusStr);
+        const isFinished =
+          state === "post" || statusType.completed === true || (!isLive && finishedByText);
 
         out.push({
           team1: short(t1Raw) || t1Raw,
@@ -68,6 +78,7 @@ async function fetchLiveMatches(): Promise<IPLMatch[]> {
           score2,
           status: statusStr,
           isLive,
+          isFinished,
         });
       }
       return out;
@@ -79,9 +90,27 @@ async function fetchLiveMatches(): Promise<IPLMatch[]> {
   return [];
 }
 
-function MatchIcon({ status, isLive }: { status: string; isLive: boolean }) {
+function MatchIcon({
+  status,
+  isLive,
+  isFinished,
+}: {
+  status: string;
+  isLive: boolean;
+  isFinished: boolean;
+}) {
   const s = status.toLowerCase();
-  
+
+  // Finished matches get a trophy (or a prohibition symbol for no-result/abandoned)
+  // instead of the generic bat icon, so a quick glance tells you it's over.
+  if (isFinished) {
+    return (
+      <span style={{ fontSize: '1rem' }}>
+        {s.includes("no result") || s.includes("abandoned") ? "🚫" : "🏆"}
+      </span>
+    );
+  }
+
   if (s.includes("rain") || s.includes("delay")) {
     return (
       <span style={{ fontSize: '1rem', animation: 'rain-shake 0.5s ease-in-out infinite' }}>
@@ -89,7 +118,7 @@ function MatchIcon({ status, isLive }: { status: string; isLive: boolean }) {
       </span>
     );
   }
-  
+
   if (s.includes("timeout")) {
     return (
       <span style={{ fontSize: '1rem', animation: 'timeout-spin 3s linear infinite' }}>
@@ -127,6 +156,20 @@ export function IPLScoreWidget() {
 
   const m = matches[idx] ?? null;
   const isLive = m?.isLive ?? false;
+  const isFinished = m?.isFinished ?? false;
+
+  // Tint the pill amber for a finished match so it reads as "done" rather than
+  // "still live but quiet", but keep the red live accent higher-priority.
+  const borderColor = isLive
+    ? 'rgba(239,68,68,0.3)'
+    : isFinished
+      ? 'rgba(234,179,8,0.35)'
+      : 'var(--border-color)';
+  const backgroundColor = isLive
+    ? 'rgba(239,68,68,0.07)'
+    : isFinished
+      ? 'rgba(234,179,8,0.08)'
+      : 'var(--bg-secondary)';
 
   return (
     <div style={{
@@ -135,13 +178,28 @@ export function IPLScoreWidget() {
       gap: '0.5rem',
       padding: '0.35rem 0.85rem',
       borderRadius: 'var(--radius-xl)',
-      border: `1px solid ${isLive ? 'rgba(239,68,68,0.3)' : 'var(--border-color)'}`,
-      background: isLive ? 'rgba(239,68,68,0.07)' : 'var(--bg-secondary)',
+      border: `1px solid ${borderColor}`,
+      background: backgroundColor,
       minWidth: '190px',
       maxWidth: '310px',
       transition: 'all 0.4s ease',
     }}>
-      <MatchIcon status={m?.status || ""} isLive={isLive} />
+      <MatchIcon status={m?.status || ""} isLive={isLive} isFinished={isFinished} />
+
+      {/* FT badge for finished matches */}
+      {isFinished && (
+        <span style={{
+          fontSize: '0.5rem',
+          fontWeight: 900,
+          letterSpacing: '0.08em',
+          color: '#b45309',
+          background: 'rgba(234,179,8,0.18)',
+          padding: '1px 5px',
+          borderRadius: 4,
+          textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>FT</span>
+      )}
 
       {loading ? (
         <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
@@ -183,10 +241,13 @@ export function IPLScoreWidget() {
           )}
           {m.status && (
             <span style={{
-              fontSize: '0.55rem', fontWeight: 700,
-              color: isLive ? '#ef4444' : 'var(--text-secondary)',
+              fontSize: '0.55rem',
+              // Finished matches get the same amber accent as the FT badge so
+              // the result string (the interesting bit) stands out.
+              fontWeight: isFinished ? 800 : 700,
+              color: isLive ? '#ef4444' : (isFinished ? '#b45309' : 'var(--text-secondary)'),
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              maxWidth: 90,
+              maxWidth: isFinished ? 140 : 90,
             }}>
               · {m.status}
             </span>

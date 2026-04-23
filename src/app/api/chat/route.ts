@@ -138,7 +138,25 @@ export async function POST(req: Request) {
 
     let text = result.response.text();
     let calendarMutated = false;
+    // The IST YYYY-MM-DD of the last successful calendar mutation. The client
+    // uses this to jump its calendar widget to the right day so a freshly
+    // created event is visible without the user having to navigate manually.
+    let calendarMutatedDate: string | null = null;
     let tasksMutated = false;
+
+    // Convert an ISO datetime (may or may not carry a UTC offset) to the IST
+    // calendar date it falls on. We first normalise to UTC ms, then add the
+    // IST offset (+5:30) before reading Y/M/D so the boundary is correct.
+    const istDateStrFromISO = (iso: string): string | null => {
+      if (!iso) return null;
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return null;
+      const ist = new Date(d.getTime() + 5.5 * 60 * 60_000);
+      const y = ist.getUTCFullYear();
+      const m = String(ist.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(ist.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
 
     // 4. Action Interception
     const actionRegex = /\{[\s\S]*?"action":[\s\S]*?\}/g;
@@ -246,6 +264,8 @@ export async function POST(req: Request) {
                if (res.ok) {
                  executionMessages.push(`📅 Calendar: created "${cmd.summary}"`);
                  calendarMutated = true;
+                 calendarMutatedDate =
+                   istDateStrFromISO(startDT) ?? calendarMutatedDate;
                } else {
                  const errJson = await res.json().catch(() => ({}));
                  console.error("Google Calendar API Error:", res.status, errJson);
@@ -269,6 +289,10 @@ export async function POST(req: Request) {
                if (res.ok) {
                  executionMessages.push(`📅 Calendar ${cmd.action === "update_event" ? "updated" : "deleted"}: ${cmd.summary || cmd.eventId}`);
                  calendarMutated = true;
+                 calendarMutatedDate =
+                   istDateStrFromISO(startDT) ??
+                   istDateStrFromISO(new Date().toISOString()) ??
+                   calendarMutatedDate;
                } else {
                  const errJson = await res.json().catch(() => ({}));
                  console.error("Google Calendar API Error:", res.status, errJson);
@@ -310,10 +334,11 @@ export async function POST(req: Request) {
       if (executionMessages.length > 0) text = `Done! ✨\n${executionMessages.map(m => `- ${m}`).join('\n')}`;
     }
 
-    return NextResponse.json({ 
-      role: 'assistant', 
-      content: text, 
-      calendarMutated, 
+    return NextResponse.json({
+      role: 'assistant',
+      content: text,
+      calendarMutated,
+      calendarMutatedDate,
       tasksMutated,
       foodMutated: text.includes("🍕") || text.includes("💡")
     });

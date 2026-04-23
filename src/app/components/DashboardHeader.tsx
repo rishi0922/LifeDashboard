@@ -28,12 +28,36 @@ export function DashboardHeader() {
         const res = await fetch("/api/weather");
         const data = await res.json();
         
-        let icon = "☀️";
-        const code = data.iconCode;
-        if (code >= 1063 && code <= 1282) icon = "🌧️";
-        else if (code >= 1003 && code <= 1030) icon = "🌤️";
-        else if (code >= 1135 && code <= 1147) icon = "🌫️";
-        else if (code >= 1000) icon = "☀️";
+        // Pick an icon based on WeatherAPI condition code (see
+        // https://www.weatherapi.com/docs/conditions.json) AND the live
+        // is_day flag so we can swap sun for moon at night.
+        const pickIcon = (code: number, isDay: boolean): string => {
+          // Thunder
+          if (code === 1087 || (code >= 1273 && code <= 1282)) return "⛈️";
+          // Snow / sleet / ice
+          if (
+            code === 1066 || code === 1069 || code === 1072 ||
+            code === 1114 || code === 1117 || code === 1147 ||
+            (code >= 1204 && code <= 1237) ||
+            (code >= 1249 && code <= 1264)
+          ) return "❄️";
+          // Rain (drizzle, showers, all rain variants)
+          if (
+            code === 1063 ||
+            (code >= 1150 && code <= 1201) ||
+            (code >= 1240 && code <= 1246)
+          ) return isDay ? "🌦️" : "🌧️";
+          // Fog / mist
+          if (code === 1030 || code === 1135) return "🌫️";
+          // Cloudy / overcast
+          if (code === 1006 || code === 1009) return "☁️";
+          // Partly cloudy
+          if (code === 1003) return isDay ? "⛅" : "☁️";
+          // Clear / sunny (default) - swap sun for moon at night
+          return isDay ? "☀️" : "🌙";
+        };
+
+        const icon = pickIcon(data.iconCode, data.isDay !== false);
 
         setWeatherData({ ...data, icon });
         setLastWeatherSync(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));

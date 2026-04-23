@@ -14,18 +14,22 @@ export async function GET() {
     const user = await getOrCreateUser();
 
     // --- Dynamic Cleanup Logic ---
+    // We only want to prune things the user has already handled or that are
+    // genuinely stale. The previous rule deleted anything created before today,
+    // which threw away fresh Gmail-sync tasks for "tomorrow's meeting" and
+    // AI-generated follow-ups the moment the day rolled over. Now we only
+    // delete DONE tasks: either completed > 4h ago, or created more than a
+    // few days back.
     const now = new Date();
     const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000);
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
-    // Auto-Delete: Completed > 4h OR anything from previous days
     await prisma.task.deleteMany({
       where: {
         userId: user.id,
         OR: [
           { status: 'DONE', updatedAt: { lt: fourHoursAgo } },
-          { createdAt: { lt: startOfToday } }
+          { status: 'DONE', createdAt: { lt: threeDaysAgo } }
         ]
       }
     });

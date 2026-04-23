@@ -3,8 +3,13 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const apiKey = process.env.WEATHER_API_KEY;
   
-  // Fallback if key is missing
+  // Fallback if key is missing.
+  // Compute a plausible day/night flag from the current IST hour so the UI
+  // sun/moon swap still works when running without a live WeatherAPI key.
   if (!apiKey || apiKey === "your_weatherapi_key_here") {
+    const istNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const hour = istNow.getHours();
+    const isDay = hour >= 6 && hour < 19;
     return NextResponse.json({
       status: "demo",
       temp: 32,
@@ -14,6 +19,7 @@ export async function GET() {
       humidity: 45,
       aqi: 72, // Moderate Value
       aqiLabel: "Mod",
+      isDay,
       lastSync: new Date().toISOString()
     });
   }
@@ -51,6 +57,7 @@ export async function GET() {
       iconCode: data.current.condition.code,
       humidity: data.current.humidity,
       aqi: Math.round(Math.min(aqi, 500)),
+      isDay: data.current.is_day === 1,
       lastSync: new Date().toISOString()
     });
 

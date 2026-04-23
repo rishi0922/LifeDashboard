@@ -10,6 +10,19 @@ type CalendarEvent = {
   end?: { dateTime?: string; date?: string };
 };
 
+// Convert a Date to an IST YYYY-MM-DD string. Using toISOString() bakes in UTC,
+// which shifts the date boundary back for anyone in IST (UTC+5:30) and makes the
+// widget look at the wrong day — events created for "today" via chat can land in
+// "yesterday" when the user is past ~6:30 PM.
+function toIstDateStr(d: Date): string {
+  const utcMs = d.getTime() + d.getTimezoneOffset() * 60_000;
+  const ist = new Date(utcMs + 5.5 * 60 * 60_000);
+  const y = ist.getFullYear();
+  const m = String(ist.getMonth() + 1).padStart(2, "0");
+  const day = String(ist.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 export function CalendarWidget() {
   const { data: session, status } = useSession();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -44,7 +57,7 @@ export function CalendarWidget() {
 
   const fetchEvents = async (targetDate: Date = selectedDate) => {
     setSyncStatus("loading");
-    const dateStr = targetDate.toISOString().split('T')[0];
+    const dateStr = toIstDateStr(targetDate);
     try {
       const res = await fetch(`/api/calendar?date=${dateStr}`);
       const data = await res.json();
@@ -59,7 +72,7 @@ export function CalendarWidget() {
       if (!res.ok) throw new Error(data.details || "Failed to fetch");
         
         // Detect new events for notification (only for TODAY)
-        const isToday = new Date().toISOString().split('T')[0] === dateStr;
+        const isToday = toIstDateStr(new Date()) === dateStr;
         if (isToday && events.length > 0 && data.events && data.events.length > events.length) {
           const currentIds = new Set(events.map(e => e.id));
           const hasNew = data.events.some((e: any) => !currentIds.has(e.id));
@@ -89,10 +102,25 @@ export function CalendarWidget() {
   useEffect(() => {
     if (status === "authenticated") {
       fetchEvents(selectedDate);
-      
-      const handleSync = () => fetchEvents(selectedDate);
+
+      // When chat creates/updates an event, it dispatches refreshCalendar with
+      // { detail: { date: "YYYY-MM-DD" } }. If that date is not currently
+      // selected, jump to it so the new event is visible immediately; otherwise
+      // just refetch the current day.
+      const handleSync = (evt: Event) => {
+        const detail = (evt as CustomEvent).detail as { date?: string } | undefined;
+        const mutated = detail?.date;
+        if (mutated && mutated !== toIstDateStr(selectedDate)) {
+          const [y, m, d] = mutated.split("-").map(Number);
+          if (y && m && d) {
+            setSelectedDate(new Date(y, m - 1, d));
+            return; // effect will re-run with the new selectedDate and fetch
+          }
+        }
+        fetchEvents(selectedDate);
+      };
       window.addEventListener('refreshCalendar', handleSync);
-      
+
       // Fixed 60-second background heartbeat
       const pollId = setInterval(() => fetchEvents(selectedDate), 60000);
       

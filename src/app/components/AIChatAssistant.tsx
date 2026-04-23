@@ -71,9 +71,15 @@ export function AIChatAssistant() {
       
       setMessages(prev => [...prev, data]);
       
-      // Notify other components if a mutation took place
+      // Notify other components if a mutation took place. We send the IST
+      // date of the mutated event along with the signal so CalendarWidget can
+      // jump to the right day — otherwise a user asking chat to create a
+      // meeting for tomorrow wouldn't see it appear until they manually
+      // navigated forward a day.
       if (data.calendarMutated) {
-        window.dispatchEvent(new Event('refreshCalendar'));
+        window.dispatchEvent(new CustomEvent('refreshCalendar', {
+          detail: { date: data.calendarMutatedDate ?? null }
+        }));
       }
       if (data.tasksMutated) {
         window.dispatchEvent(new Event('refreshTasks'));

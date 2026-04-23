@@ -10,6 +10,8 @@ export function TaskManager() {
   const [newTitle, setNewTitle] = useState("");
   const [newCategory, setNewCategory] = useState("Work");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const categories = [
     { name: 'Urgent', icon: '⚡' },
@@ -56,17 +58,73 @@ export function TaskManager() {
     }
   };
 
-  const handleGmailSync = () => {
-    // Notify the AI Chat to perform a scan
-    window.dispatchEvent(new CustomEvent('brainDump', { 
-      detail: "Please scan my Gmail inbox for any urgent tasks or deadlines and suggest what I should add." 
-    }));
+  // Direct call into the Gmail sync pipeline. We used to route this through the
+  // chat assistant ("please scan my inbox..."), which was slow, unreliable, and
+  // didn't commit tasks to the DB — it just described what it would do. Now we
+  // hit the sync endpoint, surface a count inline, and kick off a fetch so the
+  // new tasks (and calendar events) show up immediately.
+  const handleGmailSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncMessage("Scanning inbox…");
+    try {
+      const res = await fetch('/api/gmail/sync', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSyncMessage(data?.error ? `Sync failed: ${data.error}` : 'Sync failed');
+      } else {
+        const t = data?.creations?.tasks ?? 0;
+        const e = data?.creations?.events ?? 0;
+        if (t === 0 && e === 0) {
+          setSyncMessage('Inbox is clear — nothing new');
+        } else {
+          const parts: string[] = [];
+          if (t > 0) parts.push(`${t} task${t === 1 ? '' : 's'}`);
+          if (e > 0) parts.push(`${e} event${e === 1 ? '' : 's'}`);
+          setSyncMessage(`Added ${parts.join(' + ')}`);
+        }
+        try {
+          localStorage.setItem('lastGmailSync', String(Date.now()));
+        } catch {}
+        fetchTasks();
+        window.dispatchEvent(new CustomEvent('refreshCalendar', { detail: { date: null } }));
+        window.dispatchEvent(new Event('refreshGamification'));
+      }
+    } catch (err: any) {
+      console.error('Gmail sync failed', err);
+      setSyncMessage('Sync failed — network error');
+    } finally {
+      setIsSyncing(false);
+      // Clear the status line after a few seconds so the pill doesn't linger.
+      setTimeout(() => setSyncMessage(null), 5000);
+    }
   };
 
   useEffect(() => {
     fetchTasks();
     window.addEventListener('refreshTasks', fetchTasks);
-    return () => window.removeEventListener('refreshTasks', fetchTasks);
+
+    // Background heartbeat — keeps the panel in sync with any mutations
+    // happening server-side (gmail cron, chat-triggered creates, etc.) without
+    // needing the user to click refresh.
+    const pollId = setInterval(fetchTasks, 60_000);
+
+    // Auto-trigger a Gmail scan on mount, at most once every 5 minutes, so the
+    // task list reflects new emails as soon as you open the dashboard. This
+    // was previously a manual click behind the 📧 button.
+    try {
+      const last = Number(localStorage.getItem('lastGmailSync') || 0);
+      const FIVE_MIN = 5 * 60 * 1000;
+      if (!last || Date.now() - last > FIVE_MIN) {
+        handleGmailSync();
+      }
+    } catch {}
+
+    return () => {
+      window.removeEventListener('refreshTasks', fetchTasks);
+      clearInterval(pollId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleTask = async (id: string, currentStatus: string) => {
@@ -111,18 +169,21 @@ export function TaskManager() {
           ✅ Priorities
         </h2>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button 
+          <button
             onClick={handleGmailSync}
-            title="Manual Scout Scan"
-            className="btn-icon" 
-            style={{ 
-              background: 'rgba(234, 67, 53, 0.1)', 
-              color: '#ea4335', 
+            title={isSyncing ? 'Syncing inbox…' : 'Sync Gmail now'}
+            disabled={isSyncing}
+            className="btn-icon"
+            style={{
+              background: 'rgba(234, 67, 53, 0.1)',
+              color: '#ea4335',
               border: '1px solid rgba(234, 67, 53, 0.2)',
-              fontSize: '1rem'
+              fontSize: '1rem',
+              opacity: isSyncing ? 0.6 : 1,
+              cursor: isSyncing ? 'wait' : 'pointer'
             }}
           >
-            📧
+            {isSyncing ? '⏳' : '📧'}
           </button>
           <button 
             onClick={() => setIsFormOpen(!isFormOpen)}
@@ -139,6 +200,26 @@ export function TaskManager() {
           </button>
         </div>
       </div>
+
+      {syncMessage && (
+        <div style={{
+          fontSize: '0.7rem',
+          fontWeight: 600,
+          color: 'var(--text-secondary)',
+          marginTop: '-0.75rem',
+          marginBottom: '0.75rem',
+          padding: '0.35rem 0.65rem',
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 'var(--radius-md)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '0.4rem',
+          alignSelf: 'flex-start'
+        }}>
+          <span>📨</span><span>{syncMessage}</span>
+        </div>
+      )}
 
       {/* Manual Add Form */}
       {isFormOpen && (
