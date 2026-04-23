@@ -479,13 +479,11 @@ export function FinanceGrid() {
       <style jsx>{`
         .finance-grid {
           display: grid;
-          /* Expense Intelligence needs room for its tabs (LIST/PIE/BAR) + a
-             240px pie chart, so we give it 2.6fr. Goal Milestones only holds
-             two progress bars so 0.8fr is plenty. Market stays at 2fr to match
-             the visual weight on the right. Row 2 is 460px so the pie
-             renders fully with no overflow scroll. */
-          grid-template-columns: 2.6fr 0.8fr 2fr;
-          grid-template-rows: auto 460px;
+          /* Adjusted ratios: Giving more width to Goal Milestones (1.3fr) and 
+             reducing Expense Intelligence (2.1fr). Row 2 height reduced 
+             to 410px as requested. */
+          grid-template-columns: 2.1fr 1.3fr 2fr;
+          grid-template-rows: auto 410px;
           grid-template-areas:
             "wealth wealth market"
             "sub goals market";
