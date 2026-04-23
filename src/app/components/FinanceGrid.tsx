@@ -387,7 +387,7 @@ export function FinanceGrid() {
                     // slice instead of on top of it.
                     wrapperStyle={{ pointerEvents: 'none', zIndex: 50, outline: 'none' }}
                     offset={24}
-                    allowEscapeViewBox={{ x: true, y: true }}
+                    allowEscapeViewBox={false}
                     content={({ active, payload }: any) => {
                       if (active && payload && payload.length) {
                         const total = expenses.reduce((s: number, e: any) => s + e.amount, 0);
