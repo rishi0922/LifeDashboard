@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { fetchGmailSnippets } from "@/lib/gmail";
+import { fetchGmailSnippets, sendGmailReply } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +54,15 @@ export async function POST(req: Request) {
         );
         if (calRes.ok) {
           const data = await calRes.json();
-          calendarContext = `Today's Events (IST):\n${data.items?.map((ev: any) => `- ${ev.summary} at ${ev.start?.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'}) : 'All Day'}`).join('\n') || "No events today."}`;
+          // IMPORTANT: include the Google event ID with every line. Without it
+          // the AI had to fabricate IDs when asked to delete or update
+          // events, which failed with 404 Not Found.
+          calendarContext = `Today's Events (IST):\n${data.items?.map((ev: any) => {
+            const t = ev.start?.dateTime
+              ? new Date(ev.start.dateTime).toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'})
+              : 'All Day';
+            return `- [ID: ${ev.id}] "${ev.summary}" at ${t}`;
+          }).join('\n') || "No events today."}`;
         }
       } catch (err) { console.error("Cal context error", err); }
     }
@@ -69,12 +77,15 @@ export async function POST(req: Request) {
     } catch (err) { console.error("Task context error", err); }
 
     let gmailContext = "Gmail scan available! Ask me to 'check mail' or 'scan inbox' to see unread updates.";
-    const hasGmailIntent = ["email", "inbox", "gmail", "mail", "scan"].some(k => latestMessage.toLowerCase().includes(k));
+    const hasGmailIntent = ["email", "inbox", "gmail", "mail", "scan", "reply"].some(k => latestMessage.toLowerCase().includes(k));
     if (accessToken && hasGmailIntent) {
       try {
         const emails = await fetchGmailSnippets(accessToken);
         if (emails && emails.length > 0) {
-          gmailContext = `RECENT UNREAD EMAILS:\n${emails.map((e: any) => `- From: ${e.from} | Subject: ${e.subject} | Snippet: ${e.snippet}`).join('\n')}`;
+          // Surface the Gmail message id on every line so the AI can emit
+          // reply_email / task-sourceId actions with a real id instead of
+          // fabricating one. IDs are also what the dedup table keys on.
+          gmailContext = `RECENT UNREAD EMAILS:\n${emails.map((e: any) => `- [EMAIL_ID: ${e.id}] From: ${e.from} | Subject: ${e.subject} | Snippet: ${e.snippet}`).join('\n')}`;
         } else { gmailContext = "Inbox is clean!"; }
       } catch (err) { console.error("Gmail context error", err); }
     }
@@ -102,6 +113,9 @@ export async function POST(req: Request) {
       CAPABILITIES (Output JSON for actions):
       - Create Event: {"action": "create_event", "summary": "Title", "startTime": "YYYY-MM-DDTHH:mm:ss", "endTime": "YYYY-MM-DDTHH:mm:ss"}
       - Update/Delete Event: {"action": "update_event", "eventId": "ID"}, {"action": "delete_event", "eventId": "ID"}
+      * IMPORTANT: eventId MUST come verbatim from the [ID: ...] prefix in the CALENDAR context above. Never invent IDs, never use summaries as IDs. If the user asks to clear / remove / delete multiple events (e.g. "before 8am"), emit ONE delete_event JSON block per matching event.
+      - Reply to email: {"action": "reply_email", "emailId": "GMAIL_MSG_ID", "body": "Your reply text"}
+      * IMPORTANT: emailId MUST be a real Gmail message id pulled from the "RECENT UNREAD EMAILS" block below (or an id you extracted from a previous fetch this session). Write a polite, concise reply body in first person as the user. Keep it under 120 words unless the user asks for more. Never invent emailIds.
       - Create Task: {"action": "create_task", "title": "...", "category": "Work" | "Personal" | "Urgent", "sourceId": "GMAIL_MSG_ID_IF_APPLICABLE"}
       - Update/Delete Task: {"action": "update_task", "taskId": "ID", "status": "DONE"}, {"action": "delete_task", "taskId": "ID"}
       - Food Order: {"action": "create_food_order", "restaurant": "...", "items": "...", "cost": 0.0, "etaMinutes": 25}
@@ -187,6 +201,31 @@ export async function POST(req: Request) {
              });
              const suggestion = await ZomatoBridge.suggestBestOption(userObj.id, cmd.preference || "Best Value");
              executionMessages.push(`🔍 Zomato Scout found: **${suggestion.name}** (${suggestion.eta}m, ⭐${suggestion.rating}). Should I prepare a cart?`);
+          } else if (cmd.action === "reply_email" && accessToken) {
+             // Gmail reply action — the AI must provide a real Gmail message
+             // id (surfaced as [EMAIL_ID: ...] in the gmailContext block) and
+             // a body string. We don't persist anything locally; Gmail is the
+             // source of truth. Failures bubble up as friendly chat lines.
+             if (!cmd.emailId || !cmd.body) {
+               executionMessages.push(`❌ reply_email needs both emailId and body.`);
+             } else {
+               const replyRes = await sendGmailReply({
+                 accessToken,
+                 emailId: String(cmd.emailId),
+                 body: String(cmd.body),
+               });
+               if (replyRes.ok) {
+                 executionMessages.push(`✉️ Replied to email ${cmd.emailId} — sent.`);
+               } else if (replyRes.status === 403) {
+                 executionMessages.push(
+                   `❌ Can't send replies on this session. Sign out and sign back in so Google re-consents to the gmail.send scope.`
+                 );
+               } else {
+                 executionMessages.push(
+                   `❌ Reply failed: ${replyRes.error || "Unknown error"}`
+                 );
+               }
+             }
           } else if (cmd.action === "zomato_prepare_cart") {
              const userObj = await prisma.user.upsert({
                where: { email: userEmail },

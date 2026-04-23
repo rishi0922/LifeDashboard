@@ -56,7 +56,11 @@ export const authOptions: NextAuthOptions = {
           prompt: "consent",
           access_type: "offline",
           response_type: "code",
-          scope: "openid email profile https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly"
+          // gmail.send is needed for the chat assistant's reply_email action.
+          // Adding a scope means existing users must sign out and sign back in
+          // once so Google prompts them for the new consent — otherwise
+          // replies will fail with 403 insufficientPermissions.
+          scope: "openid email profile https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"
         }
       }
     })
