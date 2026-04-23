@@ -109,21 +109,21 @@ export function FinanceGrid() {
 
       {/* Wealth Summary (50-50 Weightage Design) */}
       <div className="bento-item wealth-area glass-panel animate-scale-in">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.5rem', margin: 0 }}>💰 Wealth Canvas</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.9rem' }}>
+          <h2 style={{ fontSize: '1.25rem', margin: 0 }}>💰 Wealth Canvas</h2>
           <span style={{ fontSize: '0.7rem', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--success-color)', padding: '4px 10px', borderRadius: '12px', fontWeight: 800 }}>GROWW LIVE</span>
         </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
           {/* Equity Side */}
-          <div style={{ padding: '1.25rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(99, 102, 241, 0.1)' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>EQUITY PULSE (50%)</span>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, marginTop: '0.5rem' }}>₹{ (data?.stocks?.value / 100000).toFixed(2) } L</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--success-color)', fontWeight: 600 }}>{data?.stocks?.holdings?.length} Active Holdings</div>
-            
-            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          <div style={{ padding: '0.9rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(99, 102, 241, 0.1)' }}>
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>EQUITY PULSE (50%)</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ (data?.stocks?.value / 100000).toFixed(2) } L</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', fontWeight: 600 }}>{data?.stocks?.holdings?.length} Active Holdings</div>
+
+            <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                {data?.stocks?.holdings?.slice(0, 2).map((h: any) => (
-                 <div key={h.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                 <div key={h.symbol} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
                    <span>{h.symbol}</span>
                    <span style={{ fontWeight: 600 }}>{h.change}</span>
                  </div>
@@ -132,14 +132,14 @@ export function FinanceGrid() {
           </div>
 
           {/* Mutual Fund Side */}
-          <div style={{ padding: '1.25rem', background: 'rgba(34, 197, 94, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(34, 197, 94, 0.1)' }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>MF PULSE (50%)</span>
-            <div style={{ fontSize: '1.75rem', fontWeight: 800, marginTop: '0.5rem' }}>₹{ (data?.mutualFunds?.value / 100000).toFixed(2) } L</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--accent-color)', fontWeight: 600 }}>{data?.mutualFunds?.funds?.length} active Portfolios</div>
+          <div style={{ padding: '0.9rem', background: 'rgba(34, 197, 94, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(34, 197, 94, 0.1)' }}>
+            <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>MF PULSE (50%)</span>
+            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ (data?.mutualFunds?.value / 100000).toFixed(2) } L</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--accent-color)', fontWeight: 600 }}>{data?.mutualFunds?.funds?.length} active Portfolios</div>
 
-            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                {data?.mutualFunds?.funds?.slice(0, 2).map((f: any) => (
-                 <div key={f.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                 <div key={f.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100px' }}>{f.name}</span>
                    <span style={{ fontWeight: 600 }}>{f.returns}</span>
                  </div>
@@ -204,9 +204,9 @@ export function FinanceGrid() {
       </div>
 
       {/* Expense Intelligence (Gmail Synced Ledger / Visuals) */}
-      <div 
-        className="bento-item sub-area glass-panel animate-scale-in delay-200" 
-        style={{ display: 'flex', flexDirection: 'column', minHeight: '400px', outline: 'none' }}
+      <div
+        className="bento-item sub-area glass-panel animate-scale-in delay-200"
+        style={{ display: 'flex', flexDirection: 'column', outline: 'none', overflow: 'hidden' }}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'ArrowRight') setActiveTab(p => (p + 1) % 3);
@@ -377,21 +377,31 @@ export function FinanceGrid() {
                       <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[entry.name] || '#64748b'} />
                     ))}
                   </Pie>
-                  <RechartsTooltip 
+                  <RechartsTooltip
+                    // pointerEvents:none lets the mouse "pass through" the
+                    // tooltip to the slice beneath it. Without this the
+                    // tooltip itself intercepts hover, briefly hides, then
+                    // re-shows — which reads as a jittery overlap when you
+                    // drag the cursor across the pie. offset bumps the
+                    // tooltip away from the cursor so the box sits off the
+                    // slice instead of on top of it.
+                    wrapperStyle={{ pointerEvents: 'none', zIndex: 50, outline: 'none' }}
+                    offset={24}
+                    allowEscapeViewBox={{ x: true, y: true }}
                     content={({ active, payload }: any) => {
                       if (active && payload && payload.length) {
                         const total = expenses.reduce((s: number, e: any) => s + e.amount, 0);
                         const value = payload[0].value;
                         const percent = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
                         return (
-                          <div style={{ 
-                            background: 'var(--bg-secondary)', 
-                            border: '1px solid var(--border-color)', 
-                            padding: '12px', 
-                            borderRadius: '12px', 
-                            boxShadow: '0 8px 16px rgba(0,0,0,0.12)',
-                            backdropFilter: 'blur(8px)',
-                            minWidth: '120px'
+                          <div style={{
+                            background: 'var(--bg-primary, #fff)',
+                            border: '1px solid var(--border-color)',
+                            padding: '10px 12px',
+                            borderRadius: '12px',
+                            boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                            minWidth: '130px',
+                            pointerEvents: 'none'
                           }}>
                             <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>{payload[0].name}</div>
                             <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>₹{value.toLocaleString()}</div>
@@ -447,20 +457,20 @@ export function FinanceGrid() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-              <span>Dream Home</span>
-              <span style={{ fontWeight: 700 }}>65%</span>
+              <span>🏍️ Triumph Speed 400</span>
+              <span style={{ fontWeight: 700 }}>75%</span>
             </div>
             <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ width: '65%', height: '100%', background: 'var(--accent-color)' }}></div>
+              <div style={{ width: '75%', height: '100%', background: 'var(--accent-color)' }}></div>
             </div>
           </div>
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-              <span>Retirement Core</span>
-              <span style={{ fontWeight: 700 }}>42%</span>
+              <span>🎮 PS5</span>
+              <span style={{ fontWeight: 700 }}>60%</span>
             </div>
             <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ width: '42%', height: '100%', background: 'var(--success-color)' }}></div>
+              <div style={{ width: '60%', height: '100%', background: 'var(--success-color)' }}></div>
             </div>
           </div>
         </div>
