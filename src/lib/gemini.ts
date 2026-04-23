@@ -1,11 +1,19 @@
 import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 
+// Ordered from newest/cheapest first to older/stable last. When the newer
+// 2.5 / 3.1 models hit demand spikes or go down we want the assistant to
+// degrade gracefully to the well-proven 1.5 family instead of throwing. 1.5
+// models are still fully supported by the v1 API as of this writing.
 const FALLBACK_MODELS = [
   "gemini-3.1-flash-lite-preview",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-flash-lite-latest",
-  "gemini-flash-latest"
+  "gemini-flash-latest",
+  // Gemini 1.5 safety net — slower but consistently available.
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+  "gemini-1.5-pro"
 ];
 
 let cachedWorkingModel: string | null = null;
@@ -13,7 +21,8 @@ let cachedWorkingModel: string | null = null;
 /**
  * Returns a working Gemini model by trying a chain of fallback options.
  * Caches the first successful model name for the duration of the process.
- * ONLY uses gemini-3.1-flash-lite and gemini-2.5-flash per user instructions.
+ * Prefers the 2.5/3.1 family; falls through to 1.5 when those are
+ * throttled or unavailable.
  */
 export async function getRobustModel(genAI: GoogleGenerativeAI): Promise<GenerativeModel> {
   if (cachedWorkingModel) {
@@ -38,7 +47,7 @@ export async function getRobustModel(genAI: GoogleGenerativeAI): Promise<Generat
     }
   }
 
-  throw lastError || new Error("Selected Gemini models (2.5/3.1) failed to initialize. Check your API key.");
+  throw lastError || new Error("All Gemini models (3.1 / 2.5 / 1.5) failed to initialize. Check your API key.");
 }
 
 /**
