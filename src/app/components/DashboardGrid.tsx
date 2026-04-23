@@ -27,7 +27,7 @@ export function DashboardGrid() {
         .bento-grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: auto 450px;
+          grid-template-rows: auto auto auto;
           grid-template-areas: 
             "calendar calendar tasks"
             "notes food tasks";

@@ -20,7 +20,7 @@ export function NotesPanel() {
   };
 
   return (
-    <div className="glass-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="glass-panel" style={{ height: '350px', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
         <h2 style={{ fontSize: '1.25rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           🧠 Smart Brain
