@@ -35,11 +35,20 @@ export async function sendGmailReply(params: {
   body: string;
 }): Promise<GmailReplyResult> {
   const { accessToken, emailId, body } = params;
+  // Wrap each Gmail call in a 15s AbortController so a flaky Gmail call can't
+  // drag the whole chat route past Vercel's timeout. The caller sees a
+  // structured error instead of a mid-flight connection close.
+  const withTimeout = (ms: number) => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ms);
+    return { signal: ac.signal, clear: () => clearTimeout(timer) };
+  };
   try {
+    const t1 = withTimeout(15_000);
     const detailRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages/${emailId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Message-ID&metadataHeaders=References`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: t1.signal }
+    ).finally(t1.clear);
     if (!detailRes.ok) {
       const t = await detailRes.text();
       return { ok: false, status: detailRes.status, error: `fetch source email: ${t}` };
@@ -73,6 +82,7 @@ export async function sendGmailReply(params: {
     ].filter(Boolean);
     const raw = base64UrlEncode(rfc2822Lines.join("\r\n"));
 
+    const t2 = withTimeout(15_000);
     const sendRes = await fetch(
       "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
       {
@@ -85,8 +95,9 @@ export async function sendGmailReply(params: {
           raw,
           threadId: detail.threadId,
         }),
+        signal: t2.signal,
       }
-    );
+    ).finally(t2.clear);
     if (!sendRes.ok) {
       const errJson = await sendRes.json().catch(() => ({}));
       return {
@@ -98,6 +109,11 @@ export async function sendGmailReply(params: {
     const sent = await sendRes.json();
     return { ok: true, id: sent.id, threadId: sent.threadId };
   } catch (err: any) {
+    // An AbortError here means one of the two 15s timeouts fired. Caller
+    // shouldn't silently swallow it — give them a clear reason.
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Gmail request timed out after 15s." };
+    }
     return { ok: false, error: err?.message || "Unknown reply error" };
   }
 }

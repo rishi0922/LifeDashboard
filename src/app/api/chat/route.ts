@@ -8,6 +8,13 @@ import { fetchGmailSnippets, sendGmailReply } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
 
 export const dynamic = "force-dynamic";
+// Gmail reply + Gemini + calendar context + Gmail list-snippets can total
+// 10-15s on a cold start. Vercel's default 10s cutoff was killing the
+// request mid-flight and the frontend then saw a truncated HTML error page
+// (which happened to contain the word "fetch") and labelled it a "Network
+// error". 60s leaves plenty of headroom on the Pro plan and is clamped to
+// the plan's limit on Hobby.
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {

@@ -91,8 +91,17 @@ export function AIChatAssistant() {
       
     } catch (err: any) {
       console.error("Chat Error:", err);
-      const friendlyError = err.message.includes("fetch") 
-        ? "Network error. Please check your connection." 
+      // True native fetch failures are TypeError with a message like
+      // "Failed to fetch" or "NetworkError when attempting to fetch
+      // resource". Matching on the TypeError instance (or "Failed to fetch"
+      // specifically) avoids flagging a server-side error that just happens
+      // to contain the word "fetch" somewhere in its body as a network issue.
+      const isNetwork =
+        err?.name === "TypeError" ||
+        err?.message?.includes("Failed to fetch") ||
+        err?.message?.includes("NetworkError");
+      const friendlyError = isNetwork
+        ? "Network error. Please check your connection."
         : `AI Assistant: ${err.message}`;
       setMessages(prev => [...prev, { role: 'assistant', content: friendlyError }]);
     } finally {
