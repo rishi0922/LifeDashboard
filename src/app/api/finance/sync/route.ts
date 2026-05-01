@@ -11,9 +11,13 @@ import {
   isLikelyExpense,
   isRefundOrCredit,
   looksRecurring,
+  isIntermediarySender,
+  extractMerchantFromBody,
+  normalizeMerchant,
+  computeExpenseFingerprint,
   ExpenseCategory,
 } from "@/lib/expenseClassifier";
-import { filterUnprocessed, markProcessed } from "@/lib/dedup";
+import { filterUnprocessed, markProcessed, findDuplicateExpense } from "@/lib/dedup";
 
 export const dynamic = "force-dynamic";
 
@@ -331,7 +335,15 @@ ${needsAi
     // 7. Persist. We also detect subscriptions by recurrence regardless of
     //    what the classifier said — if the same merchant+amount shows up
     //    monthly, it's a subscription.
+    //
+    //    CROSS-EMAIL DEDUP: Before inserting, we compute a fingerprint
+    //    from (userId, normalizedMerchant, amount, date) and check whether
+    //    an expense with the same fingerprint already exists. This catches
+    //    the case where the same ₹500 Swiggy purchase is reported by both
+    //    the Swiggy email AND an HDFC Bank debit alert (different email IDs
+    //    but the same underlying transaction).
     let syncCount = 0;
+    let dupCount = 0;
     for (const entry of prepared) {
       const c = entry.classified;
       if (!c) {
@@ -346,7 +358,56 @@ ${needsAi
         continue;
       }
 
-      const merchant = (c.merchant || entry.email.from.split("<")[0].trim() || "Unknown").slice(0, 120);
+      // ── Merchant resolution ──────────────────────────────────────────
+      // If the email came from a bank / CRED / UPI app, try to extract
+      // the actual merchant from the body. Bank alerts say things like
+      // "spent at SWIGGY" — we want "Swiggy", not "HDFC Bank".
+      let merchant = (c.merchant || "").slice(0, 120);
+      const fromIntermediary = isIntermediarySender(entry.email.from);
+
+      if (fromIntermediary || !merchant || merchant === "Unknown") {
+        const bodyMerchant = extractMerchantFromBody(
+          `${entry.email.subject} ${entry.email.snippet}`
+        );
+        if (bodyMerchant) {
+          merchant = bodyMerchant.slice(0, 120);
+        } else if (!merchant) {
+          merchant = (entry.email.from.split("<")[0].trim() || "Unknown").slice(0, 120);
+        }
+      }
+
+      // ── Fingerprint dedup ────────────────────────────────────────────
+      const txnDate = parseDate(entry.email.date);
+      const normalizedM = normalizeMerchant(merchant);
+      const fingerprint = computeExpenseFingerprint({
+        userId: user.id,
+        merchant,
+        amount: entry.amount,
+        date: txnDate,
+      });
+
+      const existingId = await findDuplicateExpense({
+        userId: user.id,
+        fingerprint,
+        normalizedMerchant: normalizedM,
+        amount: entry.amount,
+        date: txnDate,
+      });
+
+      if (existingId) {
+        // Another email already created this expense — skip.
+        dupCount++;
+        await markProcessed({
+          userId: user.id,
+          emailId: entry.email.id,
+          purpose: "finance_sync",
+          outcome: "duplicate",
+          externalRef: existingId,
+          subject: entry.email.subject,
+          snippet: entry.email.snippet,
+        });
+        continue;
+      }
 
       // Subscription detection override
       let finalCategory = c.category;
@@ -370,6 +431,7 @@ ${needsAi
             paymentMode: entry.paymentMode,
             confidence: c.confidence,
             method: c.method,
+            fingerprint,
           },
           create: {
             amount: entry.amount,
@@ -380,9 +442,10 @@ ${needsAi
             paymentMode: entry.paymentMode,
             confidence: c.confidence,
             method: c.method,
-            date: parseDate(entry.email.date),
+            date: txnDate,
             sourceId: entry.email.id,
             sourceType: "GMAIL",
+            fingerprint,
             userId: user.id,
           },
         });
@@ -413,7 +476,8 @@ ${needsAi
     return NextResponse.json({
       success: true,
       count: syncCount,
-      message: `Synced ${syncCount} transactions (${prepared.length} candidates, ${needsAi.length} used AI).`,
+      duplicates: dupCount,
+      message: `Synced ${syncCount} transactions (${prepared.length} candidates, ${needsAi.length} used AI, ${dupCount} duplicates skipped).`,
     });
   } catch (error: any) {
     console.error("[FinanceSync] ERROR:", error.message);

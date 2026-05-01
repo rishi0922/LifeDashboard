@@ -87,11 +87,13 @@ model Expense {
   date        DateTime @default(now())
   sourceId    String?  @unique
   sourceType  String?  // GMAIL, MANUAL
+  fingerprint String?  // hash(userId + normalizedMerchant + amount + date) for cross-email dedup
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, date])
   @@index([userId, category])
+  @@index([userId, fingerprint])
 }
 
 /// Persistent record of every Gmail message we've touched, so repeat syncs

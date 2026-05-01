@@ -30,7 +30,7 @@
 import { prisma } from "./prisma";
 
 export type EmailPurpose = "inbox_sync" | "finance_sync";
-export type EmailOutcome = "task" | "event" | "expense" | "ignored" | "error";
+export type EmailOutcome = "task" | "event" | "expense" | "ignored" | "error" | "duplicate";
 
 /**
  * Given a list of Gmail message IDs, return the subset we have NOT yet
@@ -100,6 +100,64 @@ export async function markProcessed(params: {
     // Never let a dedup-bookkeeping failure crash the sync - just log it.
     console.warn("[dedup] markProcessed failed for", params.emailId, e);
   }
+}
+
+/**
+ * Check whether an expense with the same transaction fingerprint already
+ * exists in the database. This catches the case where the same ₹500 Swiggy
+ * purchase is reported by both the Swiggy order email and an HDFC Bank
+ * debit alert — different email IDs but the same underlying transaction.
+ *
+ * Strategy:
+ *   1. Fast path: exact fingerprint match (if the fingerprint field is
+ *      already populated on older rows).
+ *   2. Slow path: query by (userId, amount, date ±1 day) and compare
+ *      normalised merchant names in-memory. This covers expenses created
+ *      before the fingerprint column was added.
+ *
+ * Returns the existing expense ID if a duplicate is found, null otherwise.
+ */
+export async function findDuplicateExpense(params: {
+  userId: string;
+  fingerprint: string;
+  normalizedMerchant: string;
+  amount: number;
+  date: Date;
+}): Promise<string | null> {
+  // Fast path: fingerprint match
+  const fpMatch = await prisma.expense.findFirst({
+    where: {
+      userId: params.userId,
+      fingerprint: params.fingerprint,
+    },
+    select: { id: true },
+  });
+  if (fpMatch) return fpMatch.id;
+
+  // Slow path: amount + date window + merchant similarity
+  const dayMs = 86_400_000;
+  const dateLow = new Date(params.date.getTime() - dayMs);
+  const dateHigh = new Date(params.date.getTime() + dayMs);
+
+  const candidates = await prisma.expense.findMany({
+    where: {
+      userId: params.userId,
+      amount: params.amount,
+      date: { gte: dateLow, lte: dateHigh },
+    },
+    select: { id: true, merchant: true },
+  });
+
+  // Import dynamically to avoid circular dependency issues at module load
+  const { normalizeMerchant } = await import("./expenseClassifier");
+
+  for (const c of candidates) {
+    if (normalizeMerchant(c.merchant) === params.normalizedMerchant) {
+      return c.id;
+    }
+  }
+
+  return null;
 }
 
 /**

@@ -299,3 +299,164 @@ export function looksRecurring(
     return amtClose;
   });
 }
+
+// ─── Cross-email Dedup Helpers ───────────────────────────────────────────────
+
+/**
+ * Financial intermediary senders. Emails from these domains are "forwarding"
+ * notifications about a spend that the actual merchant already emailed about.
+ * When detected, we try to extract the real merchant from the email body and
+ * flag the email for fingerprint dedup.
+ */
+export const INTERMEDIARY_SENDERS: Array<{
+  pattern: string;
+  name: string;
+}> = [
+  // Banks
+  { pattern: "hdfcbank",   name: "HDFC Bank" },
+  { pattern: "axisbank",   name: "Axis Bank" },
+  { pattern: "icicibank",  name: "ICICI Bank" },
+  { pattern: "sbi.co.in",  name: "SBI" },
+  { pattern: "kotak",      name: "Kotak" },
+  { pattern: "idfcfirst",  name: "IDFC First" },
+  { pattern: "indusind",   name: "IndusInd" },
+  { pattern: "yesbank",    name: "Yes Bank" },
+  { pattern: "rblbank",    name: "RBL Bank" },
+  { pattern: "federal-bank",name: "Federal Bank" },
+  // Credit card / bill-pay aggregators
+  { pattern: "cred.club",  name: "CRED" },
+  { pattern: "cred.in",    name: "CRED" },
+  // UPI / wallet alerts (when they notify about a debit at a merchant)
+  { pattern: "phonepe",    name: "PhonePe" },
+  { pattern: "paytm",      name: "Paytm" },
+  { pattern: "gpay",       name: "Google Pay" },
+  { pattern: "googlepay",  name: "Google Pay" },
+];
+
+/**
+ * Check if the email sender is a financial intermediary (bank / CRED / UPI
+ * app) rather than the actual merchant.
+ */
+export function isIntermediarySender(from: string): boolean {
+  const f = norm(from);
+  return INTERMEDIARY_SENDERS.some((s) => f.includes(s.pattern));
+}
+
+/**
+ * Corporate / legal entity names → consumer brand. Banks often use the
+ * registered company name ("BUNDL TECHNOLOGIES") instead of the consumer
+ * brand ("Swiggy"). This map normalises those.
+ */
+const MERCHANT_ALIASES: Record<string, string> = {
+  "bundl technologies": "swiggy",
+  "bundl tech": "swiggy",
+  "zomato ltd": "zomato",
+  "zomato limited": "zomato",
+  "ani technologies": "ola",
+  "uber india": "uber",
+  "uber bv": "uber",
+  "one97 communications": "paytm",
+  "flipkart internet": "flipkart",
+  "flipkart india": "flipkart",
+  "amazon seller": "amazon",
+  "amazon pay": "amazon",
+  "cloudtail india": "amazon",
+  "blinkit": "blinkit",
+  "grofers": "blinkit",
+  "locobuzz": "swiggy",
+  "rapido bike": "rapido",
+  "makemytrip india": "makemytrip",
+  "ibibo group": "goibibo",
+  "nykaa e-retail": "nykaa",
+  "nykaa fashion": "nykaa",
+  "clues network": "shopclues",
+  "prione business": "amazon",
+  "jio platforms": "jio",
+  "bharti airtel": "airtel",
+  "vodafone idea": "vi",
+  "irctc web": "irctc",
+  "pvr ltd": "pvr inox",
+  "inox leisure": "pvr inox",
+};
+
+/**
+ * Normalise a merchant name to a stable canonical form. Two emails that
+ * refer to the same real-world merchant should produce the same string.
+ *
+ * Pipeline: lowercase → trim → strip "pvt ltd" etc → alias lookup → fallback.
+ */
+export function normalizeMerchant(raw: string): string {
+  let m = norm(raw)
+    .replace(/\b(pvt|private|ltd|limited|llp|inc|corp|technologies|tech)\b\.?/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Direct alias hit
+  if (MERCHANT_ALIASES[m]) return MERCHANT_ALIASES[m];
+
+  // Partial alias match (e.g., "bundl technologies private limited" contains "bundl technologies")
+  for (const [alias, canonical] of Object.entries(MERCHANT_ALIASES)) {
+    if (m.includes(alias)) return canonical;
+  }
+
+  // Check against MERCHANT_RULES — if the normalised name matches a known
+  // merchant pattern, use that merchant's canonical name.
+  for (const rule of MERCHANT_RULES) {
+    if (rule.patterns.some((p) => m.includes(p))) {
+      return norm(rule.merchant);
+    }
+  }
+
+  return m;
+}
+
+/**
+ * Try to extract the real merchant name from a bank / CRED email body.
+ * Bank emails typically say things like:
+ *   "spent at SWIGGY", "txn at UBER", "payment to BUNDL TECHNOLOGIES"
+ */
+export function extractMerchantFromBody(text: string): string | null {
+  const t = norm(text);
+  const patterns = [
+    /(?:spent|paid|payment|txn|transaction)\s+(?:at|to|for|towards)\s+([a-z][a-z0-9 &.'/-]{1,40})/i,
+    /(?:merchant|payee|beneficiary)\s*[:\-]?\s*([a-z][a-z0-9 &.'/-]{1,40})/i,
+    /(?:purchase at|debited for)\s+([a-z][a-z0-9 &.'/-]{1,40})/i,
+    /(?:at\s+)([a-z][a-z0-9 &.'/-]{1,40})(?:\s+on\s+\d)/i,
+  ];
+
+  for (const p of patterns) {
+    const match = t.match(p);
+    if (match && match[1]) {
+      const raw = match[1].trim().replace(/\s+/g, " ");
+      // Ignore if it's just a number or very short
+      if (raw.length < 3 || /^\d+$/.test(raw)) continue;
+      return raw;
+    }
+  }
+  return null;
+}
+
+/**
+ * Compute a stable fingerprint for an expense transaction. Two emails about
+ * the same real-world spend will produce the same fingerprint, enabling
+ * cross-email dedup.
+ *
+ * Formula: simple string hash of `userId|normalizedMerchant|amount|YYYY-MM-DD`
+ */
+export function computeExpenseFingerprint(params: {
+  userId: string;
+  merchant: string;
+  amount: number;
+  date: Date;
+}): string {
+  const nm = normalizeMerchant(params.merchant);
+  const dateStr = params.date.toISOString().slice(0, 10); // YYYY-MM-DD
+  const raw = `${params.userId}|${nm}|${params.amount}|${dateStr}`;
+
+  // djb2 hash — fast, deterministic, good distribution
+  let h = 5381;
+  for (let i = 0; i < raw.length; i++) {
+    h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0;
+  }
+  return `efp_${h.toString(36)}`;
+}
