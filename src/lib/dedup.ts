@@ -28,6 +28,7 @@
  */
 
 import { prisma } from "./prisma";
+import { normalizeMerchant } from "./expenseClassifier";
 
 export type EmailPurpose = "inbox_sync" | "finance_sync";
 export type EmailOutcome = "task" | "event" | "expense" | "ignored" | "error" | "duplicate";
@@ -147,9 +148,6 @@ export async function findDuplicateExpense(params: {
     },
     select: { id: true, merchant: true },
   });
-
-  // Import dynamically to avoid circular dependency issues at module load
-  const { normalizeMerchant } = await import("./expenseClassifier");
 
   for (const c of candidates) {
     if (normalizeMerchant(c.merchant) === params.normalizedMerchant) {

@@ -275,6 +275,7 @@ export async function POST(_req: Request) {
     }
 
     // 6. Stage 2: AI fills in what rules missed. Single batched call.
+    let aiFailed = false;
     if (needsAi.length > 0) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -317,18 +318,19 @@ ${needsAi
             ? (ai.category as ExpenseCategory)
             : "Other";
 
-          // Prefer rule category when it exists — AI only fills merchant/subcategory.
+          // Prefer rule/keyword category when it exists — AI only fills merchant/subcategory.
           const existing = entry.classified;
           entry.classified = {
-            category: existing?.category && existing.method === "rule" ? existing.category : cat,
+            category: existing?.category ? existing.category : cat,
             subcategory: ai.subcategory || existing?.subcategory,
             merchant: ai.merchant || existing?.merchant,
-            confidence: existing?.method === "rule" ? existing.confidence : 0.75,
-            method: existing?.method === "rule" ? existing.method : "ai",
+            confidence: existing ? Math.max(existing.confidence, 0.75) : 0.75,
+            method: existing ? existing.method : "ai",
           };
         }
       } catch (e) {
         console.warn("[finance/sync] AI stage failed, falling back to rule categories", e);
+        aiFailed = true;
       }
     }
 
@@ -351,7 +353,7 @@ ${needsAi
           userId: user.id,
           emailId: entry.email.id,
           purpose: "finance_sync",
-          outcome: "ignored",
+          outcome: aiFailed ? "error" : "ignored",
           subject: entry.email.subject,
           snippet: entry.email.snippet,
         });
