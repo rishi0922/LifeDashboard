@@ -15,6 +15,7 @@ export function FinanceGrid() {
   
   // Tab State: 0 = List, 1 = Pie (Categories), 2 = Bar (Monthly)
   const [activeTab, setActiveTab] = useState(0);
+  const [pieMonthOffset, setPieMonthOffset] = useState(0);
   // When a user clicks a pie slice or a list-row category, we open a modal
   // with that category's full breakdown (txns, totals, MoM trend, etc).
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
@@ -61,11 +62,19 @@ export function FinanceGrid() {
   // Data Aggregation for Charts
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
+    const now = new Date();
+    const targetDate = new Date(now.getFullYear(), now.getMonth() - pieMonthOffset, 1);
+    const targetMonth = targetDate.getMonth();
+    const targetYear = targetDate.getFullYear();
+
     expenses.forEach(exp => {
-      counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
+      const d = new Date(exp.date);
+      if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
+        counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
+      }
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [expenses]);
+  }, [expenses, pieMonthOffset]);
 
   const monthlyData = useMemo(() => {
     const now = new Date();
@@ -447,6 +456,30 @@ export function FinanceGrid() {
 
           {activeTab === 1 && (
             <div style={{ width: '100%', height: '240px', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: '-5px', right: '5px', zIndex: 10 }}>
+                <select 
+                  value={pieMonthOffset} 
+                  onChange={e => setPieMonthOffset(Number(e.target.value))}
+                  style={{
+                    background: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    outline: 'none'
+                  }}
+                >
+                  {Array.from({ length: 4 }).map((_, i) => {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() - i);
+                    const label = i === 0 ? "This Month" : i === 1 ? "Last Month" : d.toLocaleString('default', { month: 'short', year: 'numeric' });
+                    return <option key={i} value={i}>{label}</option>;
+                  })}
+                </select>
+              </div>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -489,7 +522,7 @@ export function FinanceGrid() {
                     allowEscapeViewBox={{ x: false, y: false }}
                     content={({ active, payload }: any) => {
                       if (active && payload && payload.length) {
-                        const total = expenses.reduce((s: number, e: any) => s + e.amount, 0);
+                        const total = categoryData.reduce((s: number, e: any) => s + e.value, 0);
                         const value = payload[0].value;
                         const percent = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
                         return (
@@ -515,7 +548,7 @@ export function FinanceGrid() {
               </ResponsiveContainer>
               <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
                 <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase' }}>Total Spent</span>
-                <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>₹{expenses.reduce((s, e) => s + e.amount, 0).toLocaleString()}</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>₹{categoryData.reduce((s: number, e: any) => s + e.value, 0).toLocaleString()}</div>
               </div>
               <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600, opacity: 0.75 }}>
                 💡 Tap a slice to break down that category
