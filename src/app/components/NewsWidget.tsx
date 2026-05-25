@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 interface NewsItem {
   title: string;
@@ -8,27 +8,47 @@ interface NewsItem {
   pubDate: string;
   description: string;
   source: string;
+  category?: string;
+  reason?: string;
 }
 
 interface NewsData {
   tech: NewsItem[];
   finance: NewsItem[];
   general: NewsItem[];
+  f1: NewsItem[];
+  cricket: NewsItem[];
+  government: NewsItem[];
+  forYou: NewsItem[];
 }
 
+const TABS = [
+  { id: "forYou" as const, label: "★ For You", emoji: "⭐" },
+  { id: "tech" as const, label: "Tech & Systems", emoji: "💻" },
+  { id: "finance" as const, label: "Indian Finance", emoji: "📈" },
+  { id: "government" as const, label: "Govt Policy", emoji: "🏛️" },
+  { id: "f1" as const, label: "Formula 1", emoji: "🏎️" },
+  { id: "cricket" as const, label: "Cricket Hub", emoji: "🏏" },
+  { id: "general" as const, label: "Global News", emoji: "🌍" }
+];
+
 export function NewsWidget() {
-  const [news, setNews] = useState<NewsData>({ tech: [], finance: [], general: [] });
+  const [news, setNews] = useState<NewsData>({
+    tech: [], finance: [], general: [], f1: [], cricket: [], government: [], forYou: []
+  });
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [showBookmarks, setShowBookmarks] = useState(false);
-  const [bookmarks, setBookmarks] = useState<NewsItem[]>([]);
-  
+  const [activeTab, setActiveTab] = useState<typeof TABS[number]["id"]>("forYou");
+  const [dismissedUrls, setDismissedUrls] = useState<Set<string>>(new Set());
+  const [isFocused, setIsFocused] = useState(false);
+  const widgetRef = useRef<HTMLDivElement>(null);
+
   // AI Briefing State
   const [briefing, setBriefing] = useState<string | null>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [showBriefingPanel, setShowBriefingPanel] = useState(false);
 
-  // 1. Fetch News on Mount
+  // 1. Fetch News from Database/API
   const fetchNews = async () => {
     setLoading(true);
     try {
@@ -46,56 +66,67 @@ export function NewsWidget() {
 
   useEffect(() => {
     fetchNews();
-    // Load Bookmarks
-    try {
-      const saved = localStorage.getItem("news_bookmarks");
-      if (saved) setBookmarks(JSON.parse(saved));
-    } catch (e) {
-      console.error(e);
-    }
   }, []);
 
-  // 2. Bookmark Action
-  const toggleBookmark = (item: NewsItem, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    let updated;
-    const exists = bookmarks.some((b) => b.link === item.link);
-    if (exists) {
-      updated = bookmarks.filter((b) => b.link !== item.link);
-    } else {
-      updated = [...bookmarks, item];
+  // 2. Track Interaction (PATCH request to server-side weights)
+  const handleInteraction = async (action: "click" | "dismiss", item: NewsItem) => {
+    if (action === "dismiss") {
+      setDismissedUrls(prev => {
+        const next = new Set(prev);
+        next.add(item.link);
+        return next;
+      });
     }
-    
-    setBookmarks(updated);
+
     try {
-      localStorage.setItem("news_bookmarks", JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
+      await fetch("/api/news", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          category: item.category || "general",
+          title: item.title
+        })
+      });
+      
+      // If user dismisses an article in "For You", trigger a background refetch
+      // so the feed updates with a replacement article immediately.
+      if (action === "dismiss" && activeTab === "forYou") {
+        const res = await fetch("/api/news");
+        if (res.ok) {
+          const data = await res.json();
+          setNews(data);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to register ${action} interaction:`, err);
     }
   };
 
-  // 3. Generate AI Briefing
+  // 3. Generate AI Briefing (based on currently selected tab)
   const handleGenerateBriefing = async () => {
     setLoadingBriefing(true);
     setShowBriefingPanel(true);
     setBriefing(null);
     
-    // Gather current headlines
-    const headlines: string[] = [];
-    const collectHeadlines = (items: NewsItem[]) => {
-      items.slice(0, 3).forEach(item => headlines.push(item.title));
-    };
-    collectHeadlines(news.tech);
-    collectHeadlines(news.finance);
-    collectHeadlines(news.general);
+    // Gather headlines from active tab
+    const currentFeed = news[activeTab] || [];
+    const activeHeadlines = currentFeed
+      .filter(item => !dismissedUrls.has(item.link))
+      .slice(0, 5)
+      .map(item => item.title);
+
+    if (activeHeadlines.length === 0) {
+      setBriefing("No headlines available to summarize.");
+      setLoadingBriefing(false);
+      return;
+    }
 
     try {
       const res = await fetch("/api/news", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headlines }),
+        body: JSON.stringify({ headlines: activeHeadlines }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -111,105 +142,175 @@ export function NewsWidget() {
     }
   };
 
-  // 4. Search Filter logic
-  const filterList = useCallback((items: NewsItem[]) => {
-    if (!searchQuery.trim()) return items;
+  // 4. Keyboard Navigation (Restricted to Widget Focus)
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isFocused) return;
+    
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      setActiveTab(current => {
+        const currentIndex = TABS.findIndex(t => t.id === current);
+        const nextIndex = (currentIndex + 1) % TABS.length;
+        return TABS[nextIndex].id;
+      });
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      setActiveTab(current => {
+        const currentIndex = TABS.findIndex(t => t.id === current);
+        const prevIndex = (currentIndex - 1 + TABS.length) % TABS.length;
+        return TABS[prevIndex].id;
+      });
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
+  // 5. Search filtering of currently selected feed
+  const activeFeed = useMemo(() => {
+    const feed = news[activeTab] || [];
+    const visible = feed.filter(item => !dismissedUrls.has(item.link));
+    
+    if (!searchQuery.trim()) return visible;
     const query = searchQuery.toLowerCase();
-    return items.filter(
+    
+    return visible.filter(
       (item) =>
         item.title.toLowerCase().includes(query) ||
         item.description.toLowerCase().includes(query) ||
         item.source.toLowerCase().includes(query)
     );
-  }, [searchQuery]);
-
-  const filteredTech = useMemo(() => filterList(news.tech), [news.tech, filterList]);
-  const filteredFinance = useMemo(() => filterList(news.finance), [news.finance, filterList]);
-  const filteredGeneral = useMemo(() => filterList(news.general), [news.general, filterList]);
-  const filteredBookmarks = useMemo(() => filterList(bookmarks), [bookmarks, filterList]);
+  }, [news, activeTab, dismissedUrls, searchQuery]);
 
   return (
-    <div className="glass-panel" style={{ width: "100%", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+    <div 
+      ref={widgetRef}
+      tabIndex={0}
+      onFocus={() => setIsFocused(true)}
+      onBlur={(e) => {
+        // Only blur if the focus didn't move to a child element inside this widget
+        if (widgetRef.current && !widgetRef.current.contains(e.relatedTarget as Node)) {
+          setIsFocused(false);
+        }
+      }}
+      className={`glass-panel news-widget-wrapper ${isFocused ? "focused-widget" : ""}`}
+      style={{
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        gap: "1.25rem",
+        outline: "none",
+        border: isFocused ? "1px solid var(--accent-color)" : "1px solid var(--glass-border)",
+        boxShadow: isFocused ? "0 0 16px rgba(0, 122, 255, 0.15)" : "var(--glass-shadow)"
+      }}
+    >
       {/* Top Header Section */}
       <div className="news-header-container" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <h2 style={{ fontSize: "1.5rem", margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <h2 style={{ fontSize: "1.4rem", margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
             📰 Intelligence Feed
           </h2>
-          <span style={{ 
-            fontSize: "0.65rem", 
-            background: "var(--accent-color)", 
-            color: "#fff", 
-            padding: "2px 8px", 
-            borderRadius: "10px", 
-            fontWeight: 800,
-            letterSpacing: "0.5px"
-          }}>LIVE SCAN</span>
+          {isFocused && (
+            <span style={{ 
+              fontSize: "0.6rem", 
+              background: "rgba(0, 122, 255, 0.15)", 
+              color: "var(--accent-color)", 
+              padding: "2px 8px", 
+              borderRadius: "10px", 
+              fontWeight: 800,
+              letterSpacing: "0.5px"
+            }}>⌨️ ARROWS ACTIVE</span>
+          )}
         </div>
 
         {/* Action Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-          {/* Search bar */}
           <input
             type="text"
-            placeholder="Search news..."
+            placeholder="Search active feed..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
-              padding: "0.45rem 1rem",
+              padding: "0.4rem 0.85rem",
               borderRadius: "var(--radius-xl)",
               border: "1px solid var(--border-color)",
               background: "var(--bg-primary)",
               color: "var(--text-primary)",
               outline: "none",
-              fontSize: "0.8rem",
-              width: "160px",
+              fontSize: "0.75rem",
+              width: "150px",
             }}
           />
 
-          {/* AI Briefing Button */}
           <button
             onClick={handleGenerateBriefing}
             className="btn-primary"
             style={{ 
-              padding: "0.45rem 1rem", 
+              padding: "0.4rem 0.85rem", 
               borderRadius: "var(--radius-xl)", 
-              fontSize: "0.8rem",
+              fontSize: "0.75rem",
               boxShadow: "0 2px 10px rgba(99, 102, 241, 0.2)",
               background: "linear-gradient(135deg, var(--accent-color) 0%, #a855f7 100%)",
               border: "none"
             }}
           >
-            ✨ AI Briefing
+            ✨ Brief Feed
           </button>
 
-          {/* Bookmark view toggle */}
-          <button
-            onClick={() => setShowBookmarks(!showBookmarks)}
-            className="btn-icon"
-            title={showBookmarks ? "Show all news" : "Show saved bookmarks"}
-            style={{
-              width: "36px",
-              height: "36px",
-              background: showBookmarks ? "var(--warning-color)" : "var(--bg-secondary)",
-              color: showBookmarks ? "#fff" : "var(--text-primary)",
-              borderColor: showBookmarks ? "transparent" : "var(--border-color)",
-              fontSize: "1rem"
-            }}
-          >
-            ⭐
-          </button>
-
-          {/* Refresh Button */}
           <button
             onClick={fetchNews}
             className="btn-icon"
             title="Refresh News"
-            style={{ width: "36px", height: "36px", fontSize: "0.9rem" }}
+            style={{ width: "32px", height: "32px", fontSize: "0.8rem" }}
           >
             🔄
           </button>
         </div>
+      </div>
+
+      {/* Horizontal Tabs Header */}
+      <div 
+        className="tabs-scroller"
+        style={{ 
+          display: "flex", 
+          gap: "0.5rem", 
+          overflowX: "auto", 
+          paddingBottom: "0.5rem",
+          borderBottom: "1px solid var(--border-color)",
+          scrollbarWidth: "none"
+        }}
+      >
+        {TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                padding: "0.45rem 0.85rem",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid",
+                borderColor: isActive ? "var(--accent-color)" : "var(--border-color)",
+                background: isActive ? "rgba(0, 122, 255, 0.08)" : "transparent",
+                color: isActive ? "var(--accent-color)" : "var(--text-secondary)",
+                fontSize: "0.8rem",
+                fontWeight: isActive ? 700 : 500,
+                whiteSpace: "nowrap",
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px"
+              }}
+            >
+              <span>{tab.emoji}</span>
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* AI Briefing Expandable Panel */}
@@ -223,8 +324,8 @@ export function NewsWidget() {
           boxShadow: "0 8px 24px rgba(99, 102, 241, 0.05)"
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-            <h3 style={{ margin: 0, fontSize: "0.95rem", color: "var(--accent-color)", display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 800 }}>
-              ✨ Gemini Morning Intelligence Briefing
+            <h3 style={{ margin: 0, fontSize: "0.9rem", color: "var(--accent-color)", display: "flex", alignItems: "center", gap: "0.4rem", fontWeight: 800 }}>
+              ✨ Gemini AI Curation Summary
             </h3>
             <button 
               onClick={() => setShowBriefingPanel(false)}
@@ -236,138 +337,67 @@ export function NewsWidget() {
 
           {loadingBriefing ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", padding: "0.5rem 0" }}>
-              <div className="animate-pulse" style={{ height: "14px", background: "var(--border-color)", borderRadius: "4px", width: "90%" }}></div>
-              <div className="animate-pulse" style={{ height: "14px", background: "var(--border-color)", borderRadius: "4px", width: "85%" }}></div>
-              <div className="animate-pulse" style={{ height: "14px", background: "var(--border-color)", borderRadius: "4px", width: "60%" }}></div>
+              <div className="animate-pulse" style={{ height: "12px", background: "var(--border-color)", borderRadius: "4px", width: "90%" }}></div>
+              <div className="animate-pulse" style={{ height: "12px", background: "var(--border-color)", borderRadius: "4px", width: "85%" }}></div>
+              <div className="animate-pulse" style={{ height: "12px", background: "var(--border-color)", borderRadius: "4px", width: "60%" }}></div>
             </div>
           ) : (
-            <div style={{ fontSize: "0.9rem", lineHeight: "1.6", color: "var(--text-primary)" }}>
+            <div style={{ fontSize: "0.85rem", lineHeight: "1.6", color: "var(--text-primary)" }}>
               {briefing ? (
                 <div style={{ whiteSpace: "pre-line" }}>{briefing}</div>
               ) : (
-                <span style={{ color: "var(--text-secondary)" }}>Briefing could not be loaded.</span>
+                <span style={{ color: "var(--text-secondary)" }}>Summary loaded successfully.</span>
               )}
             </div>
           )}
         </div>
       )}
 
-      {/* Main Feed Container */}
+      {/* Main Feed Content Area */}
       {loading ? (
-        <div style={{ display: "flex", gap: "1.5rem", width: "100%", minHeight: "200px" }} className="news-columns-container">
-          {[1, 2, 3].map((n) => (
-            <div key={n} style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <div className="animate-pulse" style={{ height: "24px", background: "var(--border-color)", borderRadius: "4px", width: "40%" }}></div>
-              <div className="animate-pulse" style={{ height: "100px", background: "var(--border-color)", borderRadius: "var(--radius-md)" }}></div>
-              <div className="animate-pulse" style={{ height: "100px", background: "var(--border-color)", borderRadius: "var(--radius-md)" }}></div>
-            </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.25rem" }}>
+          {[1, 2, 3, 4].map((n) => (
+            <div key={n} className="animate-pulse" style={{ height: "120px", background: "var(--border-color)", borderRadius: "var(--radius-md)" }}></div>
           ))}
         </div>
-      ) : showBookmarks ? (
-        /* ── BOOKMARKS VIEW ── */
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
-            <span style={{ fontSize: "1.25rem" }}>⭐</span>
-            <h3 style={{ margin: 0, fontSize: "1.1rem" }}>Saved Articles ({filteredBookmarks.length})</h3>
-          </div>
-          {filteredBookmarks.length === 0 ? (
-            <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-secondary)", background: "var(--bg-secondary)", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-color)" }}>
-              <p style={{ fontSize: "0.9rem" }}>No bookmarked articles yet. Click the star icon on news cards to save them.</p>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.25rem" }}>
-              {filteredBookmarks.map((item) => (
-                <NewsCard key={item.link} item={item} isBookmarked={true} onToggleBookmark={(e) => toggleBookmark(item, e)} />
-              ))}
-            </div>
-          )}
+      ) : activeFeed.length === 0 ? (
+        <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-secondary)", background: "var(--bg-secondary)", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-color)" }}>
+          <p style={{ fontSize: "0.85rem" }}>No matching articles found in this feed.</p>
         </div>
       ) : (
-        /* ── THREE COLUMN FEEDS VIEW ── */
-        <div className="news-columns-container" style={{ display: "flex", gap: "2rem", width: "100%" }}>
-          {/* Tech Feed */}
-          <div className="news-column" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <h3 style={{ fontSize: "1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem" }}>
-              💻 Tech & Systems
-            </h3>
-            <div className="news-list" style={{ display: "flex", flexDirection: "column", gap: "1rem", maxHeight: "400px", overflowY: "auto", paddingRight: "4px" }}>
-              {filteredTech.length > 0 ? (
-                filteredTech.map((item) => {
-                  const isSaved = bookmarks.some((b) => b.link === item.link);
-                  return <NewsCard key={item.link} item={item} isBookmarked={isSaved} onToggleBookmark={(e) => toggleBookmark(item, e)} />;
-                })
-              ) : (
-                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontStyle: "italic" }}>No matching stories.</div>
-              )}
-            </div>
-          </div>
-
-          {/* Finance Feed */}
-          <div className="news-column" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <h3 style={{ fontSize: "1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem" }}>
-              📈 Markets & Economy
-            </h3>
-            <div className="news-list" style={{ display: "flex", flexDirection: "column", gap: "1rem", maxHeight: "400px", overflowY: "auto", paddingRight: "4px" }}>
-              {filteredFinance.length > 0 ? (
-                filteredFinance.map((item) => {
-                  const isSaved = bookmarks.some((b) => b.link === item.link);
-                  return <NewsCard key={item.link} item={item} isBookmarked={isSaved} onToggleBookmark={(e) => toggleBookmark(item, e)} />;
-                })
-              ) : (
-                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontStyle: "italic" }}>No matching stories.</div>
-              )}
-            </div>
-          </div>
-
-          {/* General Feed */}
-          <div className="news-column" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <h3 style={{ fontSize: "1rem", color: "var(--text-primary)", display: "flex", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem" }}>
-              🌍 Global Coverage
-            </h3>
-            <div className="news-list" style={{ display: "flex", flexDirection: "column", gap: "1rem", maxHeight: "400px", overflowY: "auto", paddingRight: "4px" }}>
-              {filteredGeneral.length > 0 ? (
-                filteredGeneral.map((item) => {
-                  const isSaved = bookmarks.some((b) => b.link === item.link);
-                  return <NewsCard key={item.link} item={item} isBookmarked={isSaved} onToggleBookmark={(e) => toggleBookmark(item, e)} />;
-                })
-              ) : (
-                <div style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontStyle: "italic" }}>No matching stories.</div>
-              )}
-            </div>
-          </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1.25rem" }}>
+          {activeFeed.map((item) => (
+            <NewsCard 
+              key={item.link} 
+              item={item} 
+              onClick={() => handleInteraction("click", item)}
+              onDismiss={() => handleInteraction("dismiss", item)}
+            />
+          ))}
         </div>
       )}
 
-      {/* Styled JSX for Responsive layouts */}
       <style jsx>{`
-        .news-columns-container {
-          flex-direction: row;
+        .tabs-scroller::-webkit-scrollbar {
+          display: none;
         }
-
-        @media (max-width: 992px) {
-          .news-columns-container {
-            flex-direction: column;
-            gap: 1.5rem !important;
-          }
-          
-          .news-list {
-            max-height: 300px !important;
-          }
+        .focused-widget {
+          transition: border-color 0.3s ease, box-shadow 0.3s ease;
         }
       `}</style>
     </div>
   );
 }
 
-/* ── INNER COMPONENT: INDIVIDUAL CARD ── */
+/* ── INNER COMPONENT: INDIVIDUAL NEWS CARD ── */
 function NewsCard({ 
   item, 
-  isBookmarked, 
-  onToggleBookmark 
+  onClick, 
+  onDismiss 
 }: { 
   item: NewsItem; 
-  isBookmarked: boolean; 
-  onToggleBookmark: (e: React.MouseEvent) => void 
+  onClick: () => void; 
+  onDismiss: () => void;
 }) {
   return (
     <div 
@@ -379,42 +409,73 @@ function NewsCard({
         padding: "1rem",
         display: "flex",
         flexDirection: "column",
-        gap: "0.5rem",
+        gap: "0.4rem",
         transition: "var(--transition-smooth)",
         position: "relative"
       }}
     >
-      {/* Badge & Star */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ 
-          fontSize: "0.65rem", 
-          fontWeight: 700, 
-          background: "rgba(0, 122, 255, 0.08)", 
-          color: "var(--accent-color)", 
-          padding: "2px 8px", 
-          borderRadius: "6px"
-        }}>
-          {item.source}
-        </span>
-        <button
-          onClick={onToggleBookmark}
-          style={{
-            fontSize: "0.95rem",
-            color: isBookmarked ? "var(--warning-color)" : "var(--text-secondary)",
-            opacity: isBookmarked ? 1 : 0.4,
-            cursor: "pointer",
-            transition: "all 0.2s ease"
-          }}
-          className="bookmark-btn"
-          title={isBookmarked ? "Remove Bookmark" : "Save Bookmark"}
-        >
-          ★
-        </button>
+      {/* Dismiss Button */}
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onDismiss();
+        }}
+        title="Dismiss / Mute this topic"
+        style={{
+          position: "absolute",
+          top: "8px",
+          right: "8px",
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          fontSize: "0.75rem",
+          color: "var(--text-secondary)",
+          opacity: 0.3,
+          transition: "opacity 0.2s ease, transform 0.2s ease",
+          zIndex: 5
+        }}
+        className="dismiss-btn"
+      >
+        ✕
+      </button>
+
+      {/* Badge/Source & Personalization Reason */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <span style={{ 
+            fontSize: "0.6rem", 
+            fontWeight: 700, 
+            background: "rgba(0, 122, 255, 0.08)", 
+            color: "var(--accent-color)", 
+            padding: "2px 6px", 
+            borderRadius: "4px"
+          }}>
+            {item.source}
+          </span>
+          <span style={{ fontSize: "0.6rem", color: "var(--text-secondary)", fontWeight: 500 }}>
+            {item.pubDate}
+          </span>
+        </div>
+        
+        {item.reason && (
+          <span style={{ 
+            fontSize: "0.65rem", 
+            fontWeight: 750, 
+            color: "#8b5cf6", // Indigo/Purple accent
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "2px",
+            marginTop: "0.1rem"
+          }}>
+            ✨ {item.reason}
+          </span>
+        )}
       </div>
 
       {/* Title */}
       <h4 style={{ 
-        fontSize: "0.9rem", 
+        fontSize: "0.85rem", 
         margin: 0, 
         lineHeight: "1.3", 
         fontWeight: 650, 
@@ -423,25 +484,24 @@ function NewsCard({
         {item.title}
       </h4>
 
-      {/* Description */}
+      {/* Excerpt */}
       <p style={{ 
-        fontSize: "0.75rem", 
+        fontSize: "0.7rem", 
         color: "var(--text-secondary)", 
         margin: 0, 
-        lineHeight: "1.4"
+        lineHeight: "1.4",
+        flex: 1
       }}>
         {item.description}
       </p>
 
-      {/* Footer */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.25rem" }}>
-        <span style={{ fontSize: "0.65rem", color: "var(--text-secondary)", fontWeight: 500 }}>
-          {item.pubDate}
-        </span>
+      {/* Read link */}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.2rem" }}>
         <a 
           href={item.link} 
           target="_blank" 
           rel="noopener noreferrer"
+          onClick={onClick}
           style={{ 
             fontSize: "0.7rem", 
             fontWeight: 700, 
@@ -462,8 +522,8 @@ function NewsCard({
           border-color: var(--accent-color) !important;
           box-shadow: 0 4px 16px rgba(0, 122, 255, 0.05);
         }
-        .bookmark-btn:hover {
-          opacity: 1 !important;
+        .dismiss-btn:hover {
+          opacity: 0.95 !important;
           transform: scale(1.15);
         }
         .read-more-link:hover {
