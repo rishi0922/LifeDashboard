@@ -4,8 +4,7 @@ import { CalendarWidget } from "./CalendarWidget";
 import { TaskManager } from "./TaskManager";
 import { NotesPanel } from "./NotesPanel";
 import { FoodOrdersWidget } from "./FoodOrdersWidget";
-import { DashboardHeader } from "./DashboardHeader";
-import { InboxScout } from "./InboxScout";
+import { NewsWidget } from "./NewsWidget";
 
 export function DashboardGrid() {
   return (
@@ -22,6 +21,9 @@ export function DashboardGrid() {
       <div className="bento-item food-area">
         <FoodOrdersWidget />
       </div>
+      <div className="bento-item news-area">
+        <NewsWidget />
+      </div>
 
       <style jsx>{`
         .bento-grid {
@@ -30,7 +32,8 @@ export function DashboardGrid() {
           grid-template-rows: auto auto auto;
           grid-template-areas: 
             "calendar calendar tasks"
-            "notes food tasks";
+            "notes food tasks"
+            "news news news";
           gap: 2rem;
           padding: 1rem 0;
         }
@@ -45,15 +48,16 @@ export function DashboardGrid() {
         .tasks-area { grid-area: tasks; }
         .notes-area { grid-area: notes; }
         .food-area { grid-area: food; }
+        .news-area { grid-area: news; }
 
         @media (max-width: 1200px) {
           .bento-grid {
             grid-template-columns: repeat(2, 1fr);
             grid-template-areas: 
-              "header header"
               "calendar calendar"
               "tasks notes"
-              "tasks food";
+              "tasks food"
+              "news news";
           }
         }
 
@@ -61,14 +65,15 @@ export function DashboardGrid() {
           .bento-grid {
             grid-template-columns: 1fr;
             grid-template-areas: 
-              "header"
               "calendar"
               "tasks"
               "notes"
-              "food";
+              "food"
+              "news";
           }
         }
       `}</style>
     </div>
   );
 }
+
