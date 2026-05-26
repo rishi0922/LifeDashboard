@@ -103,21 +103,50 @@ export function FinanceGrid() {
   // recent activity in that category — which is what people scan for first.
   const expandedData = useMemo(() => {
     if (!expandedCategory) return null;
-    const items = expenses.filter((e: any) => e.category === expandedCategory);
-    if (items.length === 0) return null;
-    const total = items.reduce((s: number, e: any) => s + e.amount, 0);
-    const grandTotal = expenses.reduce((s: number, e: any) => s + e.amount, 0);
-    const pctOfSpend = grandTotal > 0 ? (total / grandTotal) * 100 : 0;
-    const sorted = [...items].sort(
+
+    const now = new Date();
+    const targetDate = new Date(now.getFullYear(), now.getMonth() - pieMonthOffset, 1);
+    const targetMonth = targetDate.getMonth();
+    const targetYear = targetDate.getFullYear();
+
+    // 1. Get all transactions for this category to compute MoM change and other cross-month insights
+    const allCategoryItems = expenses.filter((e: any) => e.category === expandedCategory);
+    
+    // 2. Filter transactions to only the target month (the selected month of the pie chart)
+    const filteredItems = allCategoryItems.filter((e: any) => {
+      const d = new Date(e.date);
+      return d.getMonth() === targetMonth && d.getFullYear() === targetYear;
+    });
+
+    if (filteredItems.length === 0) return null;
+
+    // Total of the category in the target month
+    const total = filteredItems.reduce((s: number, e: any) => s + e.amount, 0);
+
+    // Grand total of ALL categories in the target month
+    const targetMonthTotalSpend = expenses.reduce((s: number, e: any) => {
+      const d = new Date(e.date);
+      if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
+        return s + e.amount;
+      }
+      return s;
+    }, 0);
+
+    const pctOfSpend = targetMonthTotalSpend > 0 ? (total / targetMonthTotalSpend) * 100 : 0;
+    
+    const sorted = [...filteredItems].sort(
       (a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
-    const largest = items.reduce(
+
+    const largest = filteredItems.reduce(
       (max: any, e: any) => (e.amount > max.amount ? e : max),
-      items[0]
+      filteredItems[0]
     );
-    const avg = total / items.length;
+
+    const avg = total / filteredItems.length;
+
     const merchantCounts: Record<string, number> = {};
-    items.forEach((e: any) => {
+    filteredItems.forEach((e: any) => {
       merchantCounts[e.merchant] = (merchantCounts[e.merchant] || 0) + 1;
     });
     const topMerchantEntry = Object.entries(merchantCounts).sort(
@@ -126,6 +155,7 @@ export function FinanceGrid() {
     const topMerchant = topMerchantEntry
       ? { name: topMerchantEntry[0], visits: topMerchantEntry[1] }
       : null;
+
     const lastSpend = sorted[0];
     const firstSpend = sorted[sorted.length - 1];
     const daysSinceLast = Math.max(
@@ -135,25 +165,26 @@ export function FinanceGrid() {
       )
     );
 
-    // Month-over-month — useful insight: "you spent 32% more on Food this
-    // month than last." If we don't have data for last month we just hide
-    // that pill rather than printing a misleading 0% / NaN.
-    const now = new Date();
+    // Month-over-month — compare the target month's total against the previous month's total.
     const monthTotals: Record<string, number> = {};
-    items.forEach((e: any) => {
+    allCategoryItems.forEach((e: any) => {
       const d = new Date(e.date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       monthTotals[key] = (monthTotals[key] || 0) + e.amount;
     });
-    const curKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
-    const currentMonthTotal = monthTotals[curKey] || 0;
+
+    const targetKey = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}`;
+    const prevDate = new Date(targetYear, targetMonth - 1, 1);
+    const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
+
+    const currentMonthTotal = monthTotals[targetKey] || 0;
     const lastMonthTotal = monthTotals[prevKey] || 0;
     const momChange =
       lastMonthTotal > 0
         ? ((currentMonthTotal - lastMonthTotal) / lastMonthTotal) * 100
         : null;
+
+    const targetMonthName = targetDate.toLocaleString('default', { month: 'long', year: 'numeric' });
 
     return {
       items: sorted,
@@ -168,9 +199,10 @@ export function FinanceGrid() {
       lastMonthTotal,
       firstSpendDate: firstSpend?.date,
       lastSpendDate: lastSpend?.date,
-      count: items.length,
+      count: filteredItems.length,
+      targetMonthName,
     };
-  }, [expandedCategory, expenses]);
+  }, [expandedCategory, expenses, pieMonthOffset]);
 
   const CATEGORY_COLORS: Record<string, string> = {
     'Food': '#ef4444',
@@ -745,14 +777,14 @@ export function FinanceGrid() {
                   ⏱ Last spend {expandedData.daysSinceLast === 0 ? 'today' : `${expandedData.daysSinceLast}d ago`}
                 </span>
                 <span style={{ fontSize: '0.72rem', padding: '5px 10px', borderRadius: '999px', fontWeight: 700, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)' }}>
-                  💸 This month ₹{expandedData.currentMonthTotal.toLocaleString()}
+                  💸 Spend in {expandedData.targetMonthName}: ₹{expandedData.currentMonthTotal.toLocaleString()}
                 </span>
               </div>
             </div>
 
             {/* Transaction list */}
-            <div style={{ padding: '0.75rem 1.5rem 0.25rem', fontSize: '0.6rem', color: 'var(--text-secondary)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              All transactions ({expandedData.count})
+            <div style={{ padding: '0.75rem 1.5rem 0.25rem', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Transactions in {expandedData.targetMonthName} ({expandedData.count})
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 1.5rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {expandedData.items.map((tx: any) => (

@@ -83,6 +83,24 @@ export async function POST(req: Request) {
       }
     } catch (err) { console.error("Task context error", err); }
 
+    let expenseContext = "No expenses recorded.";
+    try {
+      const activeUser = await prisma.user.findFirst();
+      if (activeUser) {
+        const expenses = await prisma.expense.findMany({
+          where: { userId: activeUser.id },
+          orderBy: { date: "desc" },
+          take: 150,
+        });
+        if (expenses.length > 0) {
+          expenseContext = `EXPENSES (Latest 150):\n${expenses.map((e: any) => {
+            const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
+            return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
+          }).join('\n')}`;
+        }
+      }
+    } catch (err) { console.error("Expense context error", err); }
+
     let gmailContext = "Gmail scan available! Ask me to 'check mail' or 'scan inbox' to see unread updates.";
     const hasGmailIntent = ["email", "inbox", "gmail", "mail", "scan", "reply"].some(k => latestMessage.toLowerCase().includes(k));
     if (accessToken && hasGmailIntent) {
@@ -114,6 +132,7 @@ export async function POST(req: Request) {
       - CALENDAR: ${calendarContext}
       - TASKS: ${taskContext}
       - GMAIL: ${gmailContext}
+      - EXPENSES: ${expenseContext}
       - HISTORY: Below is the recent interaction history of this session. Use it for context.
       ${JSON.stringify(messages.slice(0, -1))}
       
@@ -135,6 +154,10 @@ export async function POST(req: Request) {
       1. The snippets above ARE the latest unread emails. DO NOT ask for permission to scan; analyze them immediately.
       2. Identify actionable tasks (e.g., deadlines, invoices, meeting requests).
       3. For each actionable item, ASK the user if they want to add it as a task. IMPORTANT: Always include the Gmail Message ID as "sourceId" for deduplication.
+
+      --- EXPENSE INTELLIGENCE & ANALYSIS ---
+      - The EXPENSES block under CONTEXT contains the user's latest transactions. Use them to analyze spend, categorize costs, highlight merchants/dates, compute totals, and answer questions about budgets or financial trends.
+      - Calculate totals, averages, percentages, and MoM trends when asked. Keep math accurate.
       --- TASK CATEGORIZATION ---
       - Use "Personal" for: Shopping (Amazon, etc.), Family, Home, Health, Hobbies.
       - Use "Work" for: Office, Proejcts, Clients, Meetings.

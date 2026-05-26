@@ -137,6 +137,46 @@ function extractKeywords(title: string): string[] {
     .filter(w => w.length > 2 && !STOP_WORDS.has(w));
 }
 
+function areArticlesSimilar(title1: string, title2: string): boolean {
+  const kw1 = new Set(extractKeywords(title1));
+  const kw2 = new Set(extractKeywords(title2));
+  if (kw1.size === 0 || kw2.size === 0) return false;
+
+  let common = 0;
+  for (const w of kw1) {
+    if (kw2.has(w)) {
+      common++;
+    }
+  }
+
+  const unionSize = kw1.size + kw2.size - common;
+  const jaccard = unionSize > 0 ? common / unionSize : 0;
+  const overlap = Math.min(kw1.size, kw2.size) > 0 ? common / Math.min(kw1.size, kw2.size) : 0;
+
+  return jaccard >= 0.35 || (overlap >= 0.5 && common >= 3);
+}
+
+function deduplicateNews(articles: NewsItem[]): NewsItem[] {
+  const result: NewsItem[] = [];
+  for (const item of articles) {
+    let isDuplicate = false;
+    for (const existing of result) {
+      if (item.link === existing.link) {
+        isDuplicate = true;
+        break;
+      }
+      if (areArticlesSimilar(item.title, existing.title)) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (!isDuplicate) {
+      result.push(item);
+    }
+  }
+  return result;
+}
+
 function parseRss(xmlText: string, defaultSource: string, category: string): NewsItem[] {
   const items: NewsItem[] = [];
   const itemRegex = /<item>([\s\S]*?)<\/item>/g;
@@ -182,7 +222,7 @@ function parseRss(xmlText: string, defaultSource: string, category: string): New
       });
     }
   }
-  return items.slice(0, 10);
+  return deduplicateNews(items).slice(0, 10);
 }
 
 const FALLBACK_NEWS: Omit<NewsData, "forYou"> = {
@@ -262,14 +302,14 @@ export async function GET() {
     if (!cachedFeeds) cachedFeeds = FALLBACK_NEWS;
 
     // 2. Perform Heuristic Ranking for "For You" Section
-    const allArticles = [
+    const allArticles = deduplicateNews([
       ...cachedFeeds.tech,
       ...cachedFeeds.finance,
       ...cachedFeeds.general,
       ...cachedFeeds.f1,
       ...cachedFeeds.cricket,
       ...cachedFeeds.government
-    ];
+    ]);
 
     const scoredArticles = allArticles.map(item => {
       const cat = item.category || "general";

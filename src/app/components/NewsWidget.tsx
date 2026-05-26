@@ -200,6 +200,7 @@ export function NewsWidget() {
       className={`glass-panel news-widget-wrapper ${isFocused ? "focused-widget" : ""}`}
       style={{
         width: "100%",
+        height: "580px", // Fixed height to prevent dynamic layout shifts
         display: "flex",
         flexDirection: "column",
         gap: "1.25rem",
@@ -354,28 +355,37 @@ export function NewsWidget() {
       )}
 
       {/* Main Feed Content Area */}
-      {loading ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.25rem" }}>
-          {[1, 2, 3, 4].map((n) => (
-            <div key={n} className="animate-pulse" style={{ height: "120px", background: "var(--border-color)", borderRadius: "var(--radius-md)" }}></div>
-          ))}
-        </div>
-      ) : activeFeed.length === 0 ? (
-        <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-secondary)", background: "var(--bg-secondary)", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-color)" }}>
-          <p style={{ fontSize: "0.85rem" }}>No matching articles found in this feed.</p>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1.25rem" }}>
-          {activeFeed.map((item) => (
-            <NewsCard 
-              key={item.link} 
-              item={item} 
-              onClick={() => handleInteraction("click", item)}
-              onDismiss={() => handleInteraction("dismiss", item)}
-            />
-          ))}
-        </div>
-      )}
+      <div 
+        className="feed-scroll-container"
+        style={{ 
+          flex: 1, 
+          overflowY: "auto", 
+          paddingRight: "0.5rem"
+        }}
+      >
+        {loading ? (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1.25rem" }}>
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="animate-pulse" style={{ height: "120px", background: "var(--border-color)", borderRadius: "var(--radius-md)" }}></div>
+            ))}
+          </div>
+        ) : activeFeed.length === 0 ? (
+          <div style={{ padding: "3rem", textAlign: "center", color: "var(--text-secondary)", background: "var(--bg-secondary)", borderRadius: "var(--radius-md)", border: "1px dashed var(--border-color)" }}>
+            <p style={{ fontSize: "0.85rem" }}>No matching articles found in this feed.</p>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1.25rem" }}>
+            {activeFeed.map((item) => (
+              <NewsCard 
+                key={item.link} 
+                item={item} 
+                onClick={() => handleInteraction("click", item)}
+                onDismiss={() => handleInteraction("dismiss", item)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       <style jsx>{`
         .tabs-scroller::-webkit-scrollbar {
@@ -383,6 +393,19 @@ export function NewsWidget() {
         }
         .focused-widget {
           transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        .feed-scroll-container::-webkit-scrollbar {
+          width: 6px;
+        }
+        .feed-scroll-container::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .feed-scroll-container::-webkit-scrollbar-thumb {
+          background: var(--border-color);
+          border-radius: 3px;
+        }
+        .feed-scroll-container::-webkit-scrollbar-thumb:hover {
+          background: var(--text-secondary);
         }
       `}</style>
     </div>
