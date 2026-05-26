@@ -141,7 +141,7 @@ const MERCHANT_RULES: Array<{
   { patterns: ["phonepe"], category: "Transfer", subcategory: "upi", merchant: "PhonePe" },
   { patterns: ["google pay", "gpay", "googlepay"], category: "Transfer", subcategory: "upi", merchant: "Google Pay" },
   { patterns: ["paytm"], category: "Transfer", subcategory: "upi", merchant: "Paytm" },
-  { patterns: ["cred"], category: "Bills", subcategory: "credit_card_bill", merchant: "CRED" },
+  { patterns: ["cred.club", "cred.in", "cred pay", "cred card", "cred postpaid"], category: "Bills", subcategory: "credit_card_bill", merchant: "CRED" },
 ];
 
 /**
@@ -168,13 +168,18 @@ const KEYWORD_RULES: Array<{ patterns: string[]; category: ExpenseCategory; subc
 const CREDIT_MARKERS = [
   "credited to your account",
   "amount credited",
+  "successfully credited",
+  "credited",
   "refund",
   "refunded",
   "cashback",
   "reversed",
+  "reversal",
   "salary credit",
   "interest credit",
   "received from",
+  "deposited",
+  "credit of",
   "successfully received",
 ];
 
