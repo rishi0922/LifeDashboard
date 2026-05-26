@@ -443,7 +443,24 @@ export async function POST(req: Request) {
              //@ts-ignore
              await prisma.foodOrder.create({ data: { restaurant: cmd.restaurant, items: cmd.items, cost: cmd.cost || 0, etaMinutes: cmd.etaMinutes || 30, userId: userObj.id }});
              executionMessages.push(`🍕 Ordered ${cmd.items} from ${cmd.restaurant}`);
-          }
+          } else if (cmd.action === "save_preference") {
+              const userObj = await prisma.user.upsert({
+                where: { email: userEmail },
+                update: {},
+                create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
+              });
+              await prisma.userPreference.upsert({
+                where: {
+                  userId_key: {
+                    userId: userObj.id,
+                    key: cmd.key,
+                  }
+                },
+                update: { value: cmd.value },
+                create: { userId: userObj.id, key: cmd.key, value: cmd.value }
+              });
+              executionMessages.push(`⚙️ Saved preference: **${cmd.key}** = "${cmd.value}"`);
+           }
         } catch (e) { console.error("Action execution error", e); }
       }
       if (executionMessages.length > 0) text = `Done! ✨\n${executionMessages.map(m => `- ${m}`).join('\n')}`;

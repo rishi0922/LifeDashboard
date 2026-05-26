@@ -1,7 +1,34 @@
 import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 export async function GET() {
   const apiKey = process.env.WEATHER_API_KEY;
+
+  let city = "Hyderabad"; // Default fallback
+  try {
+    const session = await getServerSession(authOptions);
+    const userEmail = session?.user?.email;
+    if (userEmail) {
+      const user = await prisma.user.findUnique({ where: { email: userEmail } });
+      if (user) {
+        const pref = await prisma.userPreference.findUnique({
+          where: {
+            userId_key: {
+              userId: user.id,
+              key: "location"
+            }
+          }
+        });
+        if (pref && pref.value) {
+          city = pref.value;
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error reading user location preference for weather:", err);
+  }
   
   // Fallback if key is missing.
   // Compute a plausible day/night flag from the current IST hour so the UI
@@ -20,13 +47,14 @@ export async function GET() {
       aqi: 72, // Moderate Value
       aqiLabel: "Mod",
       isDay,
+      location: city,
       lastSync: new Date().toISOString()
     });
   }
 
   try {
     const res = await fetch(
-      `https://api.weatherapi.com/v1/current.json?key=${apiKey}&q=Hyderabad&aqi=yes`,
+      `https://api.weatherapi.com/v1/current.json?key=${apiKey}&q=${encodeURIComponent(city)}&aqi=yes`,
       { next: { revalidate: 60 } }
     );
     
@@ -58,6 +86,7 @@ export async function GET() {
       humidity: data.current.humidity,
       aqi: Math.round(Math.min(aqi, 500)),
       isDay: data.current.is_day === 1,
+      location: data.location.name,
       lastSync: new Date().toISOString()
     });
 
