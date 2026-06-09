@@ -510,6 +510,51 @@ export function buildSpendIntelligenceBlock(
   }
   lines.push("");
 
+  // ── LAST WEEK breakdown ────────────────────────────────────────────
+  // Without this section, the model has no per-category data for last
+  // week and defaults to "no data" when asked. Earlier version only had
+  // a single LAST WEEK total line which caused that failure mode.
+  lines.push(`LAST WEEK BY CATEGORY (${lastWeek.rangeLabel}, highest spend first):`);
+  const lastCatRows = Object.entries(lastWeek.byCategory).sort(
+    (a, b) => b[1].total - a[1].total,
+  );
+  if (lastCatRows.length === 0) {
+    lines.push("  (no spend recorded last week)");
+  } else {
+    for (const [cat, v] of lastCatRows) {
+      lines.push(
+        `  ${cat}: ${inr(v.total)} (${Math.round(v.pct)}% of week, ${
+          v.count
+        } txn${v.count === 1 ? "" : "s"})`,
+      );
+    }
+  }
+  lines.push("");
+
+  lines.push("LAST WEEK TOP MERCHANTS:");
+  if (lastWeek.topMerchants.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const m of lastWeek.topMerchants) {
+      lines.push(`  ${m.merchant}: ${m.visits}× — ${inr(m.total)}`);
+    }
+  }
+  lines.push("");
+
+  if (lastWeek.largestTxn) {
+    const d = toIST(lastWeek.largestTxn.date);
+    lines.push(
+      `LARGEST TXN LAST WEEK: ${lastWeek.largestTxn.merchant} — ${inr(
+        lastWeek.largestTxn.amount,
+      )} on ${d.toLocaleDateString("en-IN", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      })} (${lastWeek.largestTxn.category})`,
+    );
+    lines.push("");
+  }
+
   if (anomalies.length > 0) {
     lines.push("CATEGORY ANOMALIES vs USUAL BASELINE (pace-adjusted):");
     for (const a of anomalies) {

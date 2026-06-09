@@ -137,14 +137,21 @@ export async function POST(req: Request) {
           // first; the raw rows below are only for drill-down.
           const spendBlock = buildSpendIntelligenceBlock(expenses);
 
-          // Raw rows trimmed to the latest 50 — the intelligence block
-          // already summarises everything older.
-          const rawRows = expenses.slice(0, 50).map((e: any) => {
-            const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
-            return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
-          }).join('\n');
+          // Raw rows for the last 21 days — guarantees full this-week +
+          // last-week coverage even at high txn density, plus a buffer
+          // for "last X days" style queries. Bounded at 200 to keep the
+          // prompt size sane on outlier accounts.
+          const twentyOneDaysAgo = new Date();
+          twentyOneDaysAgo.setDate(twentyOneDaysAgo.getDate() - 21);
+          const recentRows = expenses
+            .filter((e: any) => new Date(e.date) >= twentyOneDaysAgo)
+            .slice(0, 200)
+            .map((e: any) => {
+              const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
+              return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
+            }).join('\n');
 
-          expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (latest 50, for drill-down only — use SPEND INTELLIGENCE above for patterns/trends):\n${rawRows}`;
+          expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (every txn in the last 21 days — use this for any window not pre-summarized above):\n${recentRows}`;
         }
       }
     } catch (err) { console.error("Expense context error", err); }
@@ -204,8 +211,10 @@ export async function POST(req: Request) {
       3. For each actionable item, ASK the user if they want to add it as a task. IMPORTANT: Always include the Gmail Message ID as "sourceId" for deduplication.
 
       --- EXPENSE INTELLIGENCE & ANALYSIS ---
-      - The EXPENSES context contains TWO sections: a pre-computed "SPEND INTELLIGENCE" block (totals, baselines, anomalies, daily pattern, MTD pace) and a raw "RECENT TRANSACTIONS" list.
-      - For any pattern / trend / "is this usual" / "did I overspend" / weekly or monthly summary question, READ FROM the SPEND INTELLIGENCE block. The numbers there are pre-computed and authoritative — DO NOT re-derive them from the raw list.
+      - The EXPENSES context has TWO sections: a pre-computed "SPEND INTELLIGENCE" block (THIS WEEK + LAST WEEK breakdowns by category and merchant, baselines, anomalies, daily pattern, MTD pace) and a raw "RECENT TRANSACTIONS" list covering every transaction in the last 21 days.
+      - For THIS WEEK or LAST WEEK pattern/trend/category questions, READ FROM the corresponding section of the SPEND INTELLIGENCE block. The numbers there are authoritative — do not re-derive them.
+      - For any window NOT pre-summarized (e.g., "yesterday", "last Tuesday", "last 3 days", "the 15th"), filter the RECENT TRANSACTIONS list by date yourself.
+      - NEVER answer "no expenses recorded for [period]" without first scanning BOTH the relevant LAST WEEK / THIS WEEK section AND the RECENT TRANSACTIONS rows for that period. If you find none in either, only then say so.
       - For "what was that ₹X charge?" or specific-transaction drill-down, use the RECENT TRANSACTIONS list.
       - When answering, cite concrete numbers (₹ amounts, %, days). Use phrases like "over the board", "in line with usual", "under usual" only when the SPEND INTELLIGENCE block explicitly says so — never invent a baseline.
       - Tell a short story: where the spend went (top categories + merchants), what stands out (anomalies + largest txn), and the verdict vs. baseline (over/in line/under).
