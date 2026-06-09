@@ -84,15 +84,7 @@ export function DashboardHeader() {
   };
 
   return (
-    <header className="glass-panel" style={{ 
-      display: 'flex', 
-      justifyContent: 'space-between', 
-      alignItems: 'center', 
-      padding: '0.6rem 2rem',
-      margin: 0,
-      width: '100%',
-      marginBottom: '0.25rem',
-    }}>
+    <header className="glass-panel header-container">
       {/* Time Hub */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0', flexShrink: 0 }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, letterSpacing: '-0.5px', fontVariantNumeric: 'tabular-nums', lineHeight: 1.1 }}>
@@ -104,7 +96,7 @@ export function DashboardHeader() {
       </div>
 
       {/* Right side: IPL pill + Weather */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0 }}>
+      <div className="header-right">
         {/* ── IPL Score Pill ── */}
         <IPLScoreWidget />
 

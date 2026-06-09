@@ -10,24 +10,17 @@ export function GamificationBar() {
   const [streak] = useState(12);
 
   return (
-    <div style={{ 
+    <div className="gamification-wrapper" style={{ 
       position: 'sticky', 
       top: 0, 
       zIndex: 50, 
-      padding: '1rem 3rem',
       background: 'var(--glass-bg)',
       backdropFilter: 'blur(24px)',
       WebkitBackdropFilter: 'blur(24px)',
       borderBottom: '1px solid var(--border-color)',
       marginBottom: '2rem'
     }}>
-      <div style={{ 
-        maxWidth: '1440px', 
-        margin: '0 auto', 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center' 
-      }}>
+      <div className="gamification-inner">
         {status === "unauthenticated" ? (
           <div style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
             <span style={{ fontWeight: 600 }}>Command Center</span>
@@ -36,7 +29,7 @@ export function GamificationBar() {
             </button>
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: '3rem', alignItems: 'center' }}>
+          <div className="gamification-stats">
             <div className="animate-fade-in delay-100">
               <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>Current Tier</span>
               <div style={{ fontWeight: 700, fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

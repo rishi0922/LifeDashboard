@@ -233,7 +233,7 @@ export function FinanceGrid() {
           <span style={{ fontSize: '0.7rem', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--success-color)', padding: '4px 10px', borderRadius: '12px', fontWeight: 800 }}>GROWW LIVE</span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+        <div className="wealth-grid">
           {/* Equity Side */}
           <div style={{ padding: '0.9rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(99, 102, 241, 0.1)' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>EQUITY PULSE (50%)</span>
@@ -812,6 +812,17 @@ export function FinanceGrid() {
       )}
 
       <style jsx>{`
+        .wealth-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1.25rem;
+        }
+        @media (max-width: 768px) {
+          .wealth-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
         .finance-grid {
           display: grid;
           /* Adjusted ratios: Giving more width to Goal Milestones (1.3fr) and 
