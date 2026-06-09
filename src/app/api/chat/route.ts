@@ -6,6 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchGmailSnippets, sendGmailReply, sendGmailNew } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
+import { buildSpendIntelligenceBlock } from "@/lib/spendAnalytics";
 
 export const dynamic = "force-dynamic";
 // Gmail reply + Gemini + calendar context + Gmail list-snippets can total
@@ -61,15 +62,36 @@ export async function POST(req: Request) {
         );
         if (calRes.ok) {
           const data = await calRes.json();
+          const items = data.items || [];
+
+          // Precompute a small summary so the AI can answer "how busy am I
+          // today" without re-counting the per-event list each time.
+          let busyMs = 0;
+          let nextLabel = "none";
+          const nowMs = Date.now();
+          for (const ev of items) {
+            const s = ev.start?.dateTime ? new Date(ev.start.dateTime).getTime() : null;
+            const e = ev.end?.dateTime ? new Date(ev.end.dateTime).getTime() : null;
+            if (s && e && e > s) busyMs += e - s;
+            if (s && s > nowMs && nextLabel === "none") {
+              const mins = Math.round((s - nowMs) / 60_000);
+              nextLabel = `"${ev.summary}" in ${mins} min`;
+            }
+          }
+          const busyHr = Math.floor(busyMs / 3_600_000);
+          const busyMin = Math.round((busyMs % 3_600_000) / 60_000);
+          const summary = `CALENDAR SUMMARY: ${items.length} event${items.length === 1 ? "" : "s"} today, ~${busyHr}h ${busyMin}m booked, next: ${nextLabel}.`;
+
           // IMPORTANT: include the Google event ID with every line. Without it
           // the AI had to fabricate IDs when asked to delete or update
           // events, which failed with 404 Not Found.
-          calendarContext = `Today's Events (IST):\n${data.items?.map((ev: any) => {
+          const lines = items.map((ev: any) => {
             const t = ev.start?.dateTime
               ? new Date(ev.start.dateTime).toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit'})
               : 'All Day';
             return `- [ID: ${ev.id}] "${ev.summary}" at ${t}`;
-          }).join('\n') || "No events today."}`;
+          });
+          calendarContext = `${summary}\nToday's Events (IST):\n${lines.join('\n') || "No events today."}`;
         }
       } catch (err) { console.error("Cal context error", err); }
     }
@@ -78,8 +100,20 @@ export async function POST(req: Request) {
     try {
       const activeUser = await prisma.user.findFirst();
       if (activeUser) {
-        const tasks = await prisma.task.findMany({ where: { userId: activeUser.id, status: 'TODO' }, take: 20 });
-        taskContext = tasks.length > 0 ? `ACTIVE TASKS:\n${tasks.map((t: any) => `- [ID: ${t.id}] ${t.title}`).join('\n')}` : "All tasks done!";
+        const tasks = await prisma.task.findMany({ where: { userId: activeUser.id, status: 'TODO' }, take: 50 });
+        if (tasks.length > 0) {
+          const byCat: Record<string, number> = {};
+          for (const t of tasks) byCat[t.category] = (byCat[t.category] || 0) + 1;
+          const catLine = Object.entries(byCat)
+            .sort((a, b) => b[1] - a[1])
+            .map(([c, n]) => `${c}: ${n}`)
+            .join(", ");
+          const summary = `TASK SUMMARY: ${tasks.length} open (${catLine}).`;
+          const lines = tasks.map((t: any) => `- [ID: ${t.id}] [${t.category}] ${t.title}`);
+          taskContext = `${summary}\nACTIVE TASKS:\n${lines.join('\n')}`;
+        } else {
+          taskContext = "TASK SUMMARY: 0 open. Inbox zero.";
+        }
       }
     } catch (err) { console.error("Task context error", err); }
 
@@ -87,16 +121,30 @@ export async function POST(req: Request) {
     try {
       const activeUser = await prisma.user.findFirst();
       if (activeUser) {
+        // 60-day window so the trailing 4-week baseline + last-month
+        // comparison both have enough data. 500-row cap is a safety net;
+        // real users rarely hit it inside 60 days.
+        const sinceDate = new Date();
+        sinceDate.setDate(sinceDate.getDate() - 60);
         const expenses = await prisma.expense.findMany({
-          where: { userId: activeUser.id },
+          where: { userId: activeUser.id, date: { gte: sinceDate } },
           orderBy: { date: "desc" },
-          take: 150,
+          take: 500,
         });
         if (expenses.length > 0) {
-          expenseContext = `EXPENSES (Latest 150):\n${expenses.map((e: any) => {
+          // Pre-computed insights block — totals, baselines, anomalies,
+          // MoM, daily pattern, on-pace projection. Gemini reads this
+          // first; the raw rows below are only for drill-down.
+          const spendBlock = buildSpendIntelligenceBlock(expenses);
+
+          // Raw rows trimmed to the latest 50 — the intelligence block
+          // already summarises everything older.
+          const rawRows = expenses.slice(0, 50).map((e: any) => {
             const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
             return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
-          }).join('\n')}`;
+          }).join('\n');
+
+          expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (latest 50, for drill-down only — use SPEND INTELLIGENCE above for patterns/trends):\n${rawRows}`;
         }
       }
     } catch (err) { console.error("Expense context error", err); }
@@ -156,8 +204,15 @@ export async function POST(req: Request) {
       3. For each actionable item, ASK the user if they want to add it as a task. IMPORTANT: Always include the Gmail Message ID as "sourceId" for deduplication.
 
       --- EXPENSE INTELLIGENCE & ANALYSIS ---
-      - The EXPENSES block under CONTEXT contains the user's latest transactions. Use them to analyze spend, categorize costs, highlight merchants/dates, compute totals, and answer questions about budgets or financial trends.
-      - Calculate totals, averages, percentages, and MoM trends when asked. Keep math accurate.
+      - The EXPENSES context contains TWO sections: a pre-computed "SPEND INTELLIGENCE" block (totals, baselines, anomalies, daily pattern, MTD pace) and a raw "RECENT TRANSACTIONS" list.
+      - For any pattern / trend / "is this usual" / "did I overspend" / weekly or monthly summary question, READ FROM the SPEND INTELLIGENCE block. The numbers there are pre-computed and authoritative — DO NOT re-derive them from the raw list.
+      - For "what was that ₹X charge?" or specific-transaction drill-down, use the RECENT TRANSACTIONS list.
+      - When answering, cite concrete numbers (₹ amounts, %, days). Use phrases like "over the board", "in line with usual", "under usual" only when the SPEND INTELLIGENCE block explicitly says so — never invent a baseline.
+      - Tell a short story: where the spend went (top categories + merchants), what stands out (anomalies + largest txn), and the verdict vs. baseline (over/in line/under).
+
+      --- ANALYTICAL MODE (CRITICAL) ---
+      - If the user is asking for analysis / explanation / a summary / a pattern read, respond with prose ONLY. DO NOT emit any {"action": "..."} JSON in analytical responses — those blocks get executed as tool calls and would be wrong for an analysis turn.
+      - Only emit action JSON when the user is asking you to DO something (create/update/delete event or task, send/reply email, save preference, food order, Zomato).
       --- TASK CATEGORIZATION ---
       - Use "Personal" for: Shopping (Amazon, etc.), Family, Home, Health, Hobbies.
       - Use "Work" for: Office, Proejcts, Clients, Meetings.

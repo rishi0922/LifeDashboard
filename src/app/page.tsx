@@ -7,6 +7,7 @@ import { AIChatAssistant } from "./components/AIChatAssistant";
 import { DashboardHeader } from "./components/DashboardHeader";
 import { FinanceGrid } from "./components/FinanceGrid";
 import { InboxScout } from "./components/InboxScout";
+import { BudgetGuardian } from "./components/BudgetGuardian";
 
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState(0); // 0: Command Center, 1: Finance
@@ -21,11 +22,12 @@ export default function DashboardPage() {
     <main className="min-h-screen" style={{ background: 'var(--bg-primary)', paddingBottom: '5rem' }}>
       <GamificationBar />
       
-      <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '0 3rem' }}>
+      <div className="page-container">
         {/* Persistent Global Header */}
         <div style={{ marginBottom: '0.75rem' }}>
           <DashboardHeader />
           <InboxScout />
+          <BudgetGuardian />
         </div>
 
         {/* Tab Switcher (Compacted) */}
