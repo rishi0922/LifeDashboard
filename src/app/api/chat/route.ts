@@ -33,6 +33,25 @@ export async function POST(req: Request) {
     const { messages } = await req.json();
     const latestMessage = messages[messages.length - 1]?.content;
 
+    // Resolve the active user ONCE, by email, and reuse it everywhere.
+    //
+    // Prior bug: every context block did `prisma.user.findFirst()` with no
+    // filter, which returns whichever User row was inserted first. During
+    // dev a "dummy@local.dev" user was created BEFORE the real OAuth
+    // sign-in, so findFirst() kept returning the dummy — and the Smart
+    // Brain was reading expenses/tasks from an empty account while the
+    // Expense Intelligence widget (which scopes by session email) showed
+    // the real user's data. Result: "no food expenses" answers even
+    // though the UI clearly listed them.
+    const activeUser = await prisma.user.upsert({
+      where: { email: userEmail },
+      update: {},
+      create: {
+        email: userEmail,
+        name: session?.user?.name || userEmail.split('@')[0],
+      },
+    });
+
     // 1. Fetch Context (Optimized)
     const istNow = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
     const istDate = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -98,61 +117,55 @@ export async function POST(req: Request) {
 
     let taskContext = "No active tasks.";
     try {
-      const activeUser = await prisma.user.findFirst();
-      if (activeUser) {
-        const tasks = await prisma.task.findMany({ where: { userId: activeUser.id, status: 'TODO' }, take: 50 });
-        if (tasks.length > 0) {
-          const byCat: Record<string, number> = {};
-          for (const t of tasks) byCat[t.category] = (byCat[t.category] || 0) + 1;
-          const catLine = Object.entries(byCat)
-            .sort((a, b) => b[1] - a[1])
-            .map(([c, n]) => `${c}: ${n}`)
-            .join(", ");
-          const summary = `TASK SUMMARY: ${tasks.length} open (${catLine}).`;
-          const lines = tasks.map((t: any) => `- [ID: ${t.id}] [${t.category}] ${t.title}`);
-          taskContext = `${summary}\nACTIVE TASKS:\n${lines.join('\n')}`;
-        } else {
-          taskContext = "TASK SUMMARY: 0 open. Inbox zero.";
-        }
+      const tasks = await prisma.task.findMany({ where: { userId: activeUser.id, status: 'TODO' }, take: 50 });
+      if (tasks.length > 0) {
+        const byCat: Record<string, number> = {};
+        for (const t of tasks) byCat[t.category] = (byCat[t.category] || 0) + 1;
+        const catLine = Object.entries(byCat)
+          .sort((a, b) => b[1] - a[1])
+          .map(([c, n]) => `${c}: ${n}`)
+          .join(", ");
+        const summary = `TASK SUMMARY: ${tasks.length} open (${catLine}).`;
+        const lines = tasks.map((t: any) => `- [ID: ${t.id}] [${t.category}] ${t.title}`);
+        taskContext = `${summary}\nACTIVE TASKS:\n${lines.join('\n')}`;
+      } else {
+        taskContext = "TASK SUMMARY: 0 open. Inbox zero.";
       }
     } catch (err) { console.error("Task context error", err); }
 
     let expenseContext = "No expenses recorded.";
     try {
-      const activeUser = await prisma.user.findFirst();
-      if (activeUser) {
-        // 60-day window so the trailing 4-week baseline + last-month
-        // comparison both have enough data. 500-row cap is a safety net;
-        // real users rarely hit it inside 60 days.
-        const sinceDate = new Date();
-        sinceDate.setDate(sinceDate.getDate() - 60);
-        const expenses = await prisma.expense.findMany({
-          where: { userId: activeUser.id, date: { gte: sinceDate } },
-          orderBy: { date: "desc" },
-          take: 500,
-        });
-        if (expenses.length > 0) {
-          // Pre-computed insights block — totals, baselines, anomalies,
-          // MoM, daily pattern, on-pace projection. Gemini reads this
-          // first; the raw rows below are only for drill-down.
-          const spendBlock = buildSpendIntelligenceBlock(expenses);
+      // 60-day window so the trailing 4-week baseline + last-month
+      // comparison both have enough data. 500-row cap is a safety net;
+      // real users rarely hit it inside 60 days.
+      const sinceDate = new Date();
+      sinceDate.setDate(sinceDate.getDate() - 60);
+      const expenses = await prisma.expense.findMany({
+        where: { userId: activeUser.id, date: { gte: sinceDate } },
+        orderBy: { date: "desc" },
+        take: 500,
+      });
+      if (expenses.length > 0) {
+        // Pre-computed insights block — totals, baselines, anomalies,
+        // MoM, daily pattern, on-pace projection. Gemini reads this
+        // first; the raw rows below are only for drill-down.
+        const spendBlock = buildSpendIntelligenceBlock(expenses);
 
-          // Raw rows for the last 21 days — guarantees full this-week +
-          // last-week coverage even at high txn density, plus a buffer
-          // for "last X days" style queries. Bounded at 200 to keep the
-          // prompt size sane on outlier accounts.
-          const twentyOneDaysAgo = new Date();
-          twentyOneDaysAgo.setDate(twentyOneDaysAgo.getDate() - 21);
-          const recentRows = expenses
-            .filter((e: any) => new Date(e.date) >= twentyOneDaysAgo)
-            .slice(0, 200)
-            .map((e: any) => {
-              const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
-              return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
-            }).join('\n');
+        // Raw rows for the last 21 days — guarantees full this-week +
+        // last-week coverage even at high txn density, plus a buffer
+        // for "last X days" style queries. Bounded at 200 to keep the
+        // prompt size sane on outlier accounts.
+        const twentyOneDaysAgo = new Date();
+        twentyOneDaysAgo.setDate(twentyOneDaysAgo.getDate() - 21);
+        const recentRows = expenses
+          .filter((e: any) => new Date(e.date) >= twentyOneDaysAgo)
+          .slice(0, 200)
+          .map((e: any) => {
+            const formattedDate = new Date(e.date).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", year: 'numeric', month: 'short', day: 'numeric' });
+            return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
+          }).join('\n');
 
-          expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (every txn in the last 21 days — use this for any window not pre-summarized above):\n${recentRows}`;
-        }
+        expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (every txn in the last 21 days — use this for any window not pre-summarized above):\n${recentRows}`;
       }
     } catch (err) { console.error("Expense context error", err); }
 
