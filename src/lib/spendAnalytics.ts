@@ -598,5 +598,70 @@ export function buildSpendIntelligenceBlock(
     );
   }
 
+  // ── Merchant-indexed inventory (last 21 days) ──────────────────────
+  // Without this, a "Food" query that finds nothing in LAST WEEK BY
+  // CATEGORY would have no fallback. Some Swiggy/Zomato txns get tagged
+  // as Other or Transfer when the classifier misses them — this block
+  // exposes those by listing every merchant with its actual tags, so
+  // the AI can match by merchant name and surface mis-categorisations.
+  const since21 = new Date(toIST(now));
+  since21.setDate(since21.getDate() - 21);
+  const last21 = expenses.filter((e) => toIST(e.date) >= since21);
+
+  const catCount: Record<string, number> = {};
+  const catTotal: Record<string, number> = {};
+  const merchantIdx: Record<
+    string,
+    { visits: number; total: number; categories: Record<string, number> }
+  > = {};
+
+  for (const e of last21) {
+    catCount[e.category] = (catCount[e.category] || 0) + 1;
+    catTotal[e.category] = (catTotal[e.category] || 0) + e.amount;
+    if (!merchantIdx[e.merchant]) {
+      merchantIdx[e.merchant] = { visits: 0, total: 0, categories: {} };
+    }
+    merchantIdx[e.merchant].visits += 1;
+    merchantIdx[e.merchant].total += e.amount;
+    merchantIdx[e.merchant].categories[e.category] =
+      (merchantIdx[e.merchant].categories[e.category] || 0) + 1;
+  }
+
+  lines.push("");
+  lines.push(
+    `INVENTORY — LAST 21 DAYS (${last21.length} txn${
+      last21.length === 1 ? "" : "s"
+    } total — use this BEFORE saying "no data"):`,
+  );
+
+  const catLine = Object.entries(catCount)
+    .sort((a, b) => b[1] - a[1])
+    .map(([c, n]) => `${c} (${n} txn, ${inr(catTotal[c])})`)
+    .join(", ");
+  lines.push(`  categories present: ${catLine || "(none)"}`);
+
+  const merchantsSorted = Object.entries(merchantIdx).sort(
+    (a, b) => b[1].visits - a[1].visits,
+  );
+  if (merchantsSorted.length > 0) {
+    lines.push(
+      "  merchants seen (sanity-check classifier tags — if a food brand like Swiggy/Zomato is tagged Other/Transfer/Bills, the classifier mis-tagged it):",
+    );
+    const cap = 40;
+    for (const [merchant, v] of merchantsSorted.slice(0, cap)) {
+      const catList = Object.entries(v.categories)
+        .map(([c, n]) => (n > 1 ? `${c}×${n}` : c))
+        .join(", ");
+      lines.push(
+        `    ${merchant}: ${v.visits}× — ${inr(v.total)} — tagged ${catList}`,
+      );
+    }
+    if (merchantsSorted.length > cap) {
+      lines.push(
+        `    … and ${merchantsSorted.length - cap} more merchants (drop down to RECENT TRANSACTIONS to see them)`,
+      );
+    }
+  }
+
   return lines.join("\n");
 }

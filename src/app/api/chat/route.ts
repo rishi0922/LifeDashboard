@@ -156,7 +156,11 @@ export async function POST(req: Request) {
       }
     } catch (err) { console.error("Expense context error", err); }
 
-    let gmailContext = "Gmail scan available! Ask me to 'check mail' or 'scan inbox' to see unread updates.";
+    // Gmail intent gate. We deliberately keep the keyword list TIGHT so a
+    // vague follow-up like "deep search" or "dig deeper" doesn't pull the
+    // model into email territory when the user was asking about expenses.
+    // Note: history mentions of email do NOT count — only the current turn.
+    let gmailContext: string | null = null;
     const hasGmailIntent = ["email", "inbox", "gmail", "mail", "scan", "reply"].some(k => latestMessage.toLowerCase().includes(k));
     if (accessToken && hasGmailIntent) {
       try {
@@ -171,23 +175,38 @@ export async function POST(req: Request) {
     }
 
     // 2. System Prompt
+    //
+    // The GMAIL block is ONLY included when the user explicitly asked about
+    // email this turn. Previously it was always present (with a leading
+    // "Gmail scan available!" placeholder) AND a duplicate `${gmailContext}`
+    // appeared in the GMAIL INTELLIGENCE section — which biased the model
+    // into pivoting to email whenever a query was vague.
+    const gmailContextLine = gmailContext
+      ? `      - GMAIL: ${gmailContext}\n`
+      : "";
+
     const prompt = `
       You are "Command Center AI". Respond clearly and concisely.
-      
+
       CORE SETTINGS:
       - TIMEZONE: Indian Standard Time (IST, UTC+5:30)
       - REFERENCE NOW: ${istNow}
       - CURRENT DATE: ${istDate.toDateString()}
-      
+
       IMPORTANT:
       - All relative times like "today", "tonight", "7 PM" must be calculated using the IST reference provided above.
       - When generating "startTime" or "endTime" for calendar actions, DO NOT use UTC. Use local IST time.
-      
+
+      --- TOPIC DISCIPLINE (CRITICAL — READ FIRST) ---
+      - Vague follow-ups like "deep search", "dig deeper", "look harder", "search again", "tell me more", "be thorough" CONTINUE the topic of the user's prior turn. They do NOT permit you to pivot to a different data source.
+      - Example: if the prior turn was about food expenses, "do a deep search" means search the expense data harder (scan RECENT TRANSACTIONS by merchant, check the INVENTORY block) — NOT scan email.
+      - You may ONLY consider email if the user's CURRENT message explicitly contains email / inbox / mail / gmail / reply / scan. Past mentions in HISTORY do NOT permit a fresh email scan or fresh email mention.
+      - Answer the question the user actually asked. Never offer to "scan email instead" as a pivot away from an unresolved query.
+
       CONTEXT:
       - CALENDAR: ${calendarContext}
       - TASKS: ${taskContext}
-      - GMAIL: ${gmailContext}
-      - EXPENSES: ${expenseContext}
+${gmailContextLine}      - EXPENSES: ${expenseContext}
       - HISTORY: Below is the recent interaction history of this session. Use it for context.
       ${JSON.stringify(messages.slice(0, -1))}
       
@@ -203,21 +222,25 @@ export async function POST(req: Request) {
       - Update/Delete Task: {"action": "update_task", "taskId": "ID", "status": "DONE"}, {"action": "delete_task", "taskId": "ID"}
       - Food Order: {"action": "create_food_order", "restaurant": "...", "items": "...", "cost": 0.0, "etaMinutes": 25}
       - Save Preference: {"action": "save_preference", "key": "...", "value": "..."}
-      --- GMAIL INTELLIGENCE ---
-      ${gmailContext}
-      If the user asks to "Scan my inbox" or mentions "email/mail":
-      1. The snippets above ARE the latest unread emails. DO NOT ask for permission to scan; analyze them immediately.
-      2. Identify actionable tasks (e.g., deadlines, invoices, meeting requests).
-      3. For each actionable item, ASK the user if they want to add it as a task. IMPORTANT: Always include the Gmail Message ID as "sourceId" for deduplication.
-
+${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this turn) ---
+      The GMAIL block under CONTEXT has the latest unread snippets. Identify actionable tasks (deadlines, invoices, meeting requests). For each, ASK the user before adding as a task. Always include the Gmail Message ID as "sourceId" for dedup.
+` : ``}
       --- EXPENSE INTELLIGENCE & ANALYSIS ---
-      - The EXPENSES context has TWO sections: a pre-computed "SPEND INTELLIGENCE" block (THIS WEEK + LAST WEEK breakdowns by category and merchant, baselines, anomalies, daily pattern, MTD pace) and a raw "RECENT TRANSACTIONS" list covering every transaction in the last 21 days.
-      - For THIS WEEK or LAST WEEK pattern/trend/category questions, READ FROM the corresponding section of the SPEND INTELLIGENCE block. The numbers there are authoritative — do not re-derive them.
-      - For any window NOT pre-summarized (e.g., "yesterday", "last Tuesday", "last 3 days", "the 15th"), filter the RECENT TRANSACTIONS list by date yourself.
-      - NEVER answer "no expenses recorded for [period]" without first scanning BOTH the relevant LAST WEEK / THIS WEEK section AND the RECENT TRANSACTIONS rows for that period. If you find none in either, only then say so.
-      - For "what was that ₹X charge?" or specific-transaction drill-down, use the RECENT TRANSACTIONS list.
-      - When answering, cite concrete numbers (₹ amounts, %, days). Use phrases like "over the board", "in line with usual", "under usual" only when the SPEND INTELLIGENCE block explicitly says so — never invent a baseline.
-      - Tell a short story: where the spend went (top categories + merchants), what stands out (anomalies + largest txn), and the verdict vs. baseline (over/in line/under).
+      - The EXPENSES context has THREE sections in order: (1) SPEND INTELLIGENCE block with THIS WEEK + LAST WEEK breakdowns by category and merchant, baselines, anomalies, daily pattern, MTD pace; (2) an INVENTORY block listing every category and every merchant seen in the last 21 days with how each merchant was tagged; (3) a RECENT TRANSACTIONS list covering every transaction in the last 21 days.
+      - For THIS WEEK / LAST WEEK pattern questions: read from the corresponding section of the SPEND INTELLIGENCE block. Those numbers are authoritative — do not re-derive them.
+      - For "yesterday" / "last Tuesday" / "last 3 days" / specific-day windows: filter RECENT TRANSACTIONS by date yourself.
+
+      MANDATORY DRILL-DOWN BEFORE CLAIMING "NO DATA":
+      If the user asks about a category (e.g., "food expenses last week") and you don't see that category in the relevant LAST WEEK / THIS WEEK breakdown, you MUST run these checks BEFORE saying there's nothing:
+      1. Look at the INVENTORY "categories present" line for that window. If the category genuinely isn't there, say so AND list the categories that ARE present, with counts.
+      2. Look at the INVENTORY "merchants seen" block. Match by brand name — these merchants are FOOD regardless of how the classifier tagged them: Swiggy, Zomato, Eatsure, Domino's, Domino, McDonald, Mcdelivery, KFC, Subway, Starbucks, Chaayos, Third Wave Coffee, Blinkit, Zepto, Instamart, BigBasket, Licious, Dunzo, Faasos, Box8, Behrouz, Cafe Coffee Day, Burger King, Pizza Hut, Wow Momo, Haldiram.
+      3. Similarly for other categories: Travel = Uber, Ola, Rapido, IndiGo, Air India, IRCTC, RedBus, MakeMyTrip, Goibibo, ixigo, OYO. Shopping = Amazon, Flipkart, Myntra, Ajio, Meesho, Nykaa. Subscription = Netflix, Spotify, Hotstar, YouTube, ChatGPT, Claude, Notion, Figma.
+      4. If you find a brand-match that was tagged with a different category (e.g., Swiggy tagged "Other"), surface it explicitly: "I see 3 Swiggy charges last week totaling ₹X, but they were tagged 'Other' — looks like the classifier mis-tagged them. Hit SYNC in Expense Intelligence to re-classify."
+      5. Only after steps 1-4 turn up nothing, respond: "I see [N] transactions in your last 21 days, in these categories: [list]. No Food-related transactions or merchant matches in [period]. If you ordered food and it isn't showing up, hit the SYNC button in Expense Intelligence — the email may not have been processed yet." Do NOT offer to scan email; that's a topic pivot.
+
+      - For "what was that ₹X charge?" drill-down, use RECENT TRANSACTIONS.
+      - When answering, cite concrete numbers. Use phrases like "over the board", "in line with usual" only when the SPEND INTELLIGENCE block explicitly says so.
+      - Tell a short story: where the spend went, what stands out, the verdict vs baseline.
 
       --- ANALYTICAL MODE (CRITICAL) ---
       - If the user is asking for analysis / explanation / a summary / a pattern read, respond with prose ONLY. DO NOT emit any {"action": "..."} JSON in analytical responses — those blocks get executed as tool calls and would be wrong for an analysis turn.
