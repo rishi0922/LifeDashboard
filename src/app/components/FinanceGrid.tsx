@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell as BarCell
@@ -26,6 +26,10 @@ export function FinanceGrid() {
   // a cross-month comparison view; a single-day scope wouldn't be useful.
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
+  // Ref to the JUMP trigger button — the calendar popover anchors to
+  // this via getBoundingClientRect, rendered through a portal so the
+  // bento card's `overflow: hidden` can't clip it.
+  const jumpButtonRef = useRef<HTMLButtonElement>(null);
 
   // IST-pinned YYYY-MM-DD key so day comparisons match what the user sees
   // elsewhere in the dashboard (clock + intelligence are Asia/Kolkata).
@@ -414,11 +418,13 @@ export function FinanceGrid() {
               ))}
             </div>
           </div>
-          {/* Right-side actions: date jump + sync. Wrapped in a relative
-              container so the calendar popover can anchor under the date
-              button without disturbing the rest of the layout. */}
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', position: 'relative' }}>
+          {/* Right-side actions: date jump + sync. The calendar popover
+              lives in a portal (see ExpenseCalendar) so it isn't bound
+              by the bento card's overflow:hidden — it just anchors to
+              the JUMP button via getBoundingClientRect. */}
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
             <button
+              ref={jumpButtonRef}
               onClick={() => setShowCalendar(v => !v)}
               title="Jump to a specific date"
               style={{
@@ -479,6 +485,7 @@ export function FinanceGrid() {
 
             {showCalendar && (
               <ExpenseCalendar
+                anchorRef={jumpButtonRef}
                 expenses={expenses}
                 selectedDate={selectedDate}
                 onSelect={(d) => setSelectedDate(d)}
@@ -507,38 +514,43 @@ export function FinanceGrid() {
           </div>
         )}
 
-        {/* Date-filter indicator. Shown when the user has jumped to a
-            specific day — surfaces the active scope and gives a one-click
-            escape so people don't get stuck in a filtered view. */}
+        {/* Date-filter indicator. Compact pill so it doesn't steal
+            vertical room from the chart/list area below. */}
         {selectedDate && (
           <div style={{
-            fontSize: '0.7rem',
-            padding: '0.5rem 0.75rem',
-            borderRadius: '6px',
-            marginBottom: '1rem',
+            fontSize: '0.65rem',
+            padding: '0.3rem 0.6rem',
+            borderRadius: '999px',
+            marginBottom: '0.6rem',
             background: 'rgba(99, 102, 241, 0.08)',
             color: 'var(--accent-color)',
             border: '1px solid rgba(99, 102, 241, 0.25)',
-            display: 'flex',
+            display: 'inline-flex',
             justifyContent: 'space-between',
             alignItems: 'center',
+            gap: '0.5rem',
+            width: 'fit-content',
           }}>
             <span style={{ fontWeight: 700 }}>
-              📅 Showing {selectedDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}
+              📅 {selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
               {dateScopedExpenses.length > 0
-                ? ` · ${dateScopedExpenses.length} txn${dateScopedExpenses.length === 1 ? '' : 's'} · ₹${dateScopedExpenses.reduce((s: number, e: any) => s + e.amount, 0).toLocaleString('en-IN')}`
-                : ' · no spend on this day'}
+                ? ` · ${dateScopedExpenses.length} txn · ₹${dateScopedExpenses.reduce((s: number, e: any) => s + e.amount, 0).toLocaleString('en-IN')}`
+                : ' · no spend'}
             </span>
             <button
               onClick={() => setSelectedDate(null)}
-              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+              aria-label="Clear date filter"
+              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 800, padding: 0, lineHeight: 1 }}
             >
-              Clear ✕
+              ✕
             </button>
           </div>
         )}
 
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        {/* Tab content area — flex column so the PIE/BAR children can
+            flex-fill instead of using fixed pixel heights that don't
+            adapt when the date-filter banner is showing. */}
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {activeTab === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
               {/* Use dateScopedExpenses so a date jump narrows the list to
@@ -600,7 +612,7 @@ export function FinanceGrid() {
           )}
 
           {activeTab === 1 && (
-            <div style={{ width: '100%', height: '240px', position: 'relative' }}>
+            <div style={{ width: '100%', flex: 1, minHeight: '200px', position: 'relative', display: 'flex', flexDirection: 'column' }}>
               {/* Hide the month selector while a single-day filter is
                   active — they'd contradict each other. The user can
                   Clear the day filter (banner above) to return to the
@@ -631,14 +643,18 @@ export function FinanceGrid() {
                   </select>
                 </div>
               )}
+              {/* Chart area flexes to fill the remaining height of the
+                  pie-tab column, so it adapts when the date-filter
+                  banner is present. */}
+              <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={categoryData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
+                    innerRadius={50}
+                    outerRadius={75}
                     paddingAngle={5}
                     dataKey="value"
                     animationBegin={0}
@@ -705,14 +721,16 @@ export function FinanceGrid() {
                 </span>
                 <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>₹{categoryData.reduce((s: number, e: any) => s + e.value, 0).toLocaleString()}</div>
               </div>
-              <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600, opacity: 0.75 }}>
+              </div>
+              <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600, opacity: 0.75, flexShrink: 0 }}>
                 💡 Tap a slice to break down that category
               </div>
             </div>
           )}
 
           {activeTab === 2 && (
-            <div style={{ width: '100%', height: '240px' }}>
+            <div style={{ width: '100%', flex: 1, minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ flex: 1, minHeight: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyData} margin={{ top: 20, right: 10, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
@@ -729,7 +747,8 @@ export function FinanceGrid() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-              <div style={{ marginTop: '0.5rem', textAlign: 'center', fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              </div>
+              <div style={{ marginTop: '0.5rem', textAlign: 'center', fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 600, flexShrink: 0 }}>
                  Burn rate comparison for last 3 cycles
               </div>
             </div>

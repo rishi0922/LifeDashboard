@@ -1,24 +1,24 @@
 "use client";
 
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * Date-jump calendar for the Expense Intelligence widget.
  *
- * Renders as a popover with a 6-row month grid. Each day cell is heat-
- * tinted by the day's spend total (red intensity scales with the
- * brightest day in view), shows a hover tooltip with the day's amount +
- * txn count, and highlights today (dashed accent outline) and the
- * currently selected date (filled accent background).
+ * Rendered via a React portal to `document.body` so it escapes the bento
+ * card's `overflow: hidden` (which is needed for the scrollable list
+ * underneath but was previously clipping the popover). Position is
+ * computed from the trigger button's bounding rect with auto-flip to
+ * above the button if there isn't enough room below.
  *
- * Clicking a day calls onSelect(date) and closes. Clicking "Today" jumps
- * to and selects today. "Clear" returns to the default month view in the
- * parent. The popover closes on ESC, on backdrop click, and on outside
- * click.
+ * Each day cell is heat-tinted by the day's spend total (red intensity
+ * scales with the brightest day in the visible month), shows a hover
+ * tooltip with the day's amount + txn count, and highlights today
+ * (dashed outline) and the currently selected date (filled accent).
  *
- * All date math is IST-pinned so the day boundary matches what the user
- * sees elsewhere in the dashboard (the project's clock + finance widget
- * are both in Asia/Kolkata).
+ * All date math is IST-pinned to match the dashboard's clock + finance
+ * intelligence (Asia/Kolkata).
  */
 
 interface ExpenseLite {
@@ -27,6 +27,11 @@ interface ExpenseLite {
 }
 
 interface ExpenseCalendarProps {
+  /**
+   * Ref to the button that opened the calendar. Used to anchor the
+   * popover; the calendar reads its position via getBoundingClientRect.
+   */
+  anchorRef: RefObject<HTMLElement | null>;
   expenses: ExpenseLite[];
   selectedDate: Date | null;
   onSelect: (date: Date | null) => void;
@@ -34,6 +39,9 @@ interface ExpenseCalendarProps {
 }
 
 const IST_TZ = "Asia/Kolkata";
+const POPOVER_WIDTH = 280;
+const POPOVER_HEIGHT_ESTIMATE = 360;
+const VIEWPORT_MARGIN = 8;
 
 function toIST(d: Date | string): Date {
   return new Date(new Date(d).toLocaleString("en-US", { timeZone: IST_TZ }));
@@ -47,6 +55,7 @@ function dateKey(d: Date): string {
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
 export function ExpenseCalendar({
+  anchorRef,
   expenses,
   selectedDate,
   onSelect,
@@ -55,12 +64,54 @@ export function ExpenseCalendar({
   const today = useMemo(() => toIST(new Date()), []);
   const popoverRef = useRef<HTMLDivElement>(null);
 
+  // SSR safety — only mount portal contents on the client.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // Compute viewport-relative position from the anchor. Recompute on
+  // resize and any scroll (capture phase so nested scroll containers
+  // also trigger an update).
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!mounted) return;
+    const updatePosition = () => {
+      if (!anchorRef.current) return;
+      const rect = anchorRef.current.getBoundingClientRect();
+
+      let left = rect.right - POPOVER_WIDTH;
+      let top = rect.bottom + 8;
+
+      // Keep on screen horizontally.
+      if (left < VIEWPORT_MARGIN) left = VIEWPORT_MARGIN;
+      if (left + POPOVER_WIDTH > window.innerWidth - VIEWPORT_MARGIN) {
+        left = window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN;
+      }
+
+      // Flip to above the trigger if there isn't enough room below.
+      if (top + POPOVER_HEIGHT_ESTIMATE > window.innerHeight - VIEWPORT_MARGIN) {
+        top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT_ESTIMATE - 8);
+      }
+
+      setPosition({ top, left });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [mounted, anchorRef]);
+
   const [viewMonth, setViewMonth] = useState<Date>(() => {
     const base = selectedDate ? toIST(selectedDate) : today;
     return new Date(base.getFullYear(), base.getMonth(), 1);
   });
 
-  // Per-day spend map for heat coloring + tooltips.
   const spendByDay = useMemo(() => {
     const map: Record<string, { total: number; count: number }> = {};
     for (const e of expenses) {
@@ -72,8 +123,6 @@ export function ExpenseCalendar({
     return map;
   }, [expenses]);
 
-  // Brightest day in the CURRENT view month — used to scale the heat
-  // intensity so a single huge day doesn't wash out everything else.
   const maxSpendInView = useMemo(() => {
     let m = 0;
     for (const [k, v] of Object.entries(spendByDay)) {
@@ -89,8 +138,6 @@ export function ExpenseCalendar({
     return m;
   }, [spendByDay, viewMonth]);
 
-  // 6×7 grid: leading days from previous month, current month, trailing
-  // days from next month — so the visual grid is always rectangular.
   const grid = useMemo(() => {
     const firstDay = new Date(
       viewMonth.getFullYear(),
@@ -105,7 +152,6 @@ export function ExpenseCalendar({
     const startCol = firstDay.getDay();
 
     const cells: Array<{ date: Date; inMonth: boolean }> = [];
-
     for (let i = startCol - 1; i >= 0; i--) {
       const d = new Date(firstDay);
       d.setDate(firstDay.getDate() - (i + 1));
@@ -123,7 +169,6 @@ export function ExpenseCalendar({
       d.setDate(last.getDate() + 1);
       cells.push({ date: d, inMonth: false });
     }
-
     return cells;
   }, [viewMonth]);
 
@@ -133,18 +178,17 @@ export function ExpenseCalendar({
     );
   };
 
-  // ESC + outside click → close.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     const onDown = (e: MouseEvent) => {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
-        onClose();
-      }
+      // Don't close if the click is inside the popover OR on the anchor
+      // button (the anchor's own onClick handles toggle).
+      const target = e.target as Node;
+      if (popoverRef.current && popoverRef.current.contains(target)) return;
+      if (anchorRef.current && anchorRef.current.contains(target)) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("mousedown", onDown);
@@ -152,7 +196,9 @@ export function ExpenseCalendar({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onDown);
     };
-  }, [onClose]);
+  }, [onClose, anchorRef]);
+
+  if (!mounted || !position) return null;
 
   const todayKey = dateKey(today);
   const selectedKey = selectedDate ? dateKey(selectedDate) : null;
@@ -161,26 +207,24 @@ export function ExpenseCalendar({
     year: "numeric",
   });
 
-  return (
+  const popover = (
     <div
       ref={popoverRef}
       role="dialog"
       aria-label="Jump to a specific date"
       style={{
-        position: "absolute",
-        top: "calc(100% + 8px)",
-        right: 0,
-        zIndex: 100,
+        position: "fixed",
+        top: position.top,
+        left: position.left,
+        width: POPOVER_WIDTH,
+        zIndex: 9999,
         background: "var(--bg-primary, #fff)",
         border: "1px solid var(--border-color)",
         borderRadius: "var(--radius-lg, 12px)",
         boxShadow: "0 18px 48px rgba(0,0,0,0.18)",
-        padding: "1rem",
-        width: "300px",
+        padding: "0.85rem",
         animation: "scaleIn 0.15s ease-out",
       }}
-      // Stop bubbling so the parent's onClick handlers (e.g., backdrop)
-      // don't fire when interacting inside the popover.
       onClick={(e) => e.stopPropagation()}
     >
       {/* Month header */}
@@ -189,21 +233,22 @@ export function ExpenseCalendar({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          marginBottom: "0.75rem",
+          marginBottom: "0.6rem",
         }}
       >
         <button
           onClick={() => goToMonth(-1)}
           aria-label="Previous month"
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
+            width: 26,
+            height: 26,
+            borderRadius: 7,
             border: "1px solid var(--border-color)",
             background: "var(--bg-secondary)",
             cursor: "pointer",
             fontWeight: 800,
             color: "var(--text-primary)",
+            fontSize: "0.85rem",
           }}
         >
           ‹
@@ -211,7 +256,7 @@ export function ExpenseCalendar({
         <span
           style={{
             fontWeight: 800,
-            fontSize: "0.9rem",
+            fontSize: "0.85rem",
             color: "var(--text-primary)",
             letterSpacing: "0.02em",
           }}
@@ -222,14 +267,15 @@ export function ExpenseCalendar({
           onClick={() => goToMonth(1)}
           aria-label="Next month"
           style={{
-            width: 28,
-            height: 28,
-            borderRadius: 8,
+            width: 26,
+            height: 26,
+            borderRadius: 7,
             border: "1px solid var(--border-color)",
             background: "var(--bg-secondary)",
             cursor: "pointer",
             fontWeight: 800,
             color: "var(--text-primary)",
+            fontSize: "0.85rem",
           }}
         >
           ›
@@ -241,15 +287,15 @@ export function ExpenseCalendar({
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 4,
-          marginBottom: 6,
+          gap: 3,
+          marginBottom: 4,
         }}
       >
         {WEEKDAYS.map((d, i) => (
           <div
             key={i}
             style={{
-              fontSize: "0.62rem",
+              fontSize: "0.58rem",
               fontWeight: 800,
               textAlign: "center",
               color: "var(--text-secondary)",
@@ -267,7 +313,7 @@ export function ExpenseCalendar({
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 4,
+          gap: 3,
         }}
       >
         {grid.map((cell, i) => {
@@ -283,7 +329,7 @@ export function ExpenseCalendar({
           const background = isSelected
             ? "var(--accent-color)"
             : heat > 0
-              ? `rgba(239, 68, 68, ${0.1 + heat * 0.35})`
+              ? `rgba(239, 68, 68, ${0.1 + heat * 0.32})`
               : "transparent";
 
           const color = isSelected
@@ -312,46 +358,27 @@ export function ExpenseCalendar({
                   : isToday
                     ? "1px dashed var(--accent-color)"
                     : "1px solid transparent",
-                borderRadius: 8,
+                borderRadius: 6,
                 background,
                 color,
                 opacity: cell.inMonth ? 1 : 0.4,
                 cursor: "pointer",
-                fontSize: "0.78rem",
+                fontSize: "0.72rem",
                 fontWeight: isToday || isSelected ? 800 : 600,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 position: "relative",
-                transition:
-                  "transform 0.1s ease, box-shadow 0.1s ease",
+                transition: "transform 0.1s ease",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.transform =
-                  "scale(1.06)";
-                if (!isSelected)
-                  (e.currentTarget as HTMLElement).style.boxShadow =
-                    "0 2px 6px rgba(0,0,0,0.08)";
+                (e.currentTarget as HTMLElement).style.transform = "scale(1.06)";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.transform =
-                  "scale(1)";
-                (e.currentTarget as HTMLElement).style.boxShadow = "none";
+                (e.currentTarget as HTMLElement).style.transform = "scale(1)";
               }}
             >
               {cell.date.getDate()}
-              {spend && !isSelected && (
-                <span
-                  style={{
-                    position: "absolute",
-                    bottom: 3,
-                    width: 3,
-                    height: 3,
-                    borderRadius: "50%",
-                    background: "var(--accent-color)",
-                  }}
-                />
-              )}
             </button>
           );
         })}
@@ -362,8 +389,8 @@ export function ExpenseCalendar({
         style={{
           display: "flex",
           justifyContent: "space-between",
-          marginTop: "0.75rem",
-          gap: 8,
+          marginTop: "0.6rem",
+          gap: 6,
         }}
       >
         <button
@@ -374,13 +401,13 @@ export function ExpenseCalendar({
           }}
           style={{
             flex: 1,
-            padding: "0.4rem 0.6rem",
-            fontSize: "0.7rem",
+            padding: "0.35rem 0.5rem",
+            fontSize: "0.66rem",
             fontWeight: 700,
             background: "var(--bg-secondary)",
             color: "var(--text-primary)",
             border: "1px solid var(--border-color)",
-            borderRadius: 8,
+            borderRadius: 7,
             cursor: "pointer",
           }}
         >
@@ -394,13 +421,13 @@ export function ExpenseCalendar({
             }}
             style={{
               flex: 1,
-              padding: "0.4rem 0.6rem",
-              fontSize: "0.7rem",
+              padding: "0.35rem 0.5rem",
+              fontSize: "0.66rem",
               fontWeight: 700,
               background: "transparent",
               color: "var(--text-secondary)",
               border: "1px solid var(--border-color)",
-              borderRadius: 8,
+              borderRadius: 7,
               cursor: "pointer",
             }}
           >
@@ -410,4 +437,6 @@ export function ExpenseCalendar({
       </div>
     </div>
   );
+
+  return createPortal(popover, document.body);
 }
