@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, 
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell as BarCell
 } from 'recharts';
+import { ExpenseCalendar } from './ExpenseCalendar';
 
 export function FinanceGrid() {
   const [data, setData] = useState<any>(null);
@@ -19,6 +20,29 @@ export function FinanceGrid() {
   // When a user clicks a pie slice or a list-row category, we open a modal
   // with that category's full breakdown (txns, totals, MoM trend, etc).
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+
+  // Date-jump filter — when set, the LIST and the PIE narrow to that
+  // single calendar day (IST). The BAR chart is unaffected because it's
+  // a cross-month comparison view; a single-day scope wouldn't be useful.
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [showCalendar, setShowCalendar] = useState(false);
+
+  // IST-pinned YYYY-MM-DD key so day comparisons match what the user sees
+  // elsewhere in the dashboard (clock + intelligence are Asia/Kolkata).
+  const istDayKey = useCallback((d: Date | string): string => {
+    const x = new Date(new Date(d).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  }, []);
+
+  // Expenses scoped to the selected day, when one is picked. When the
+  // filter is null we return the full expenses array so memos that
+  // already filter by month (pie) or no date (list) keep their existing
+  // semantics — no behavioural drift in the default flow.
+  const dateScopedExpenses = useMemo(() => {
+    if (!selectedDate) return expenses;
+    const target = istDayKey(selectedDate);
+    return expenses.filter((e: any) => istDayKey(e.date) === target);
+  }, [expenses, selectedDate, istDayKey]);
 
   const fetchData = async () => {
     try {
@@ -60,21 +84,37 @@ export function FinanceGrid() {
 
 
   // Data Aggregation for Charts
+  //
+  // Two modes:
+  //   - Date-jump active: scope the pie to that one day so the slices
+  //     answer "where did my spend go on June 15?".
+  //   - No date filter: existing behaviour — month at `pieMonthOffset`.
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
-    const now = new Date();
-    const targetDate = new Date(now.getFullYear(), now.getMonth() - pieMonthOffset, 1);
-    const targetMonth = targetDate.getMonth();
-    const targetYear = targetDate.getFullYear();
 
-    expenses.forEach(exp => {
-      const d = new Date(exp.date);
-      if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
-        counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
-      }
-    });
+    if (selectedDate) {
+      const target = istDayKey(selectedDate);
+      expenses.forEach((exp: any) => {
+        if (istDayKey(exp.date) === target) {
+          counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
+        }
+      });
+    } else {
+      const now = new Date();
+      const targetDate = new Date(now.getFullYear(), now.getMonth() - pieMonthOffset, 1);
+      const targetMonth = targetDate.getMonth();
+      const targetYear = targetDate.getFullYear();
+
+      expenses.forEach(exp => {
+        const d = new Date(exp.date);
+        if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
+          counts[exp.category] = (counts[exp.category] || 0) + exp.amount;
+        }
+      });
+    }
+
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, [expenses, pieMonthOffset]);
+  }, [expenses, pieMonthOffset, selectedDate, istDayKey]);
 
   const monthlyData = useMemo(() => {
     const now = new Date();
@@ -374,48 +414,85 @@ export function FinanceGrid() {
               ))}
             </div>
           </div>
-          <button 
-            onClick={async () => {
-              setLoading(true);
-              setSyncFeedback({ type: null, message: "" });
-              try {
-                const res = await fetch('/api/finance/sync', { method: 'POST' });
-                const json = await res.json();
-                
-                if (res.ok) {
-                  setSyncFeedback({ type: 'success', message: json.message || "Sync complete." });
-                  fetchData();
-                  setTimeout(() => setSyncFeedback({ type: null, message: "" }), 5000);
-                } else {
-                  setSyncFeedback({ type: 'error', message: json.error || "Sync failed." });
+          {/* Right-side actions: date jump + sync. Wrapped in a relative
+              container so the calendar popover can anchor under the date
+              button without disturbing the rest of the layout. */}
+          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', position: 'relative' }}>
+            <button
+              onClick={() => setShowCalendar(v => !v)}
+              title="Jump to a specific date"
+              style={{
+                padding: '0.4rem 0.7rem',
+                fontSize: '0.65rem',
+                fontWeight: 800,
+                background: selectedDate ? 'var(--accent-color)' : 'var(--bg-secondary)',
+                color: selectedDate ? '#fff' : 'var(--text-primary)',
+                border: `1px solid ${selectedDate ? 'var(--accent-color)' : 'var(--border-color)'}`,
+                borderRadius: '8px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span style={{ fontSize: '0.85rem' }}>📅</span>
+              {selectedDate
+                ? selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                : 'JUMP'}
+            </button>
+            <button
+              onClick={async () => {
+                setLoading(true);
+                setSyncFeedback({ type: null, message: "" });
+                try {
+                  const res = await fetch('/api/finance/sync', { method: 'POST' });
+                  const json = await res.json();
+
+                  if (res.ok) {
+                    setSyncFeedback({ type: 'success', message: json.message || "Sync complete." });
+                    fetchData();
+                    setTimeout(() => setSyncFeedback({ type: null, message: "" }), 5000);
+                  } else {
+                    setSyncFeedback({ type: 'error', message: json.error || "Sync failed." });
+                  }
+                } catch (e) {
+                  setSyncFeedback({ type: 'error', message: "Network error during sync." });
+                } finally {
+                  setLoading(false);
                 }
-              } catch (e) {
-                setSyncFeedback({ type: 'error', message: "Network error during sync." });
-              } finally {
-                setLoading(false);
-              }
-            }}
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.65rem',
-              fontWeight: 800,
-              background: 'rgba(99, 102, 241, 0.1)',
-              color: 'var(--accent-color)',
-              border: '1px solid var(--accent-color)',
-              borderRadius: '8px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.7 : 1
-            }}
-          >
-            {loading ? 'SYNCING...' : '✨ SYNC'}
-          </button>
+              }}
+              style={{
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.65rem',
+                fontWeight: 800,
+                background: 'rgba(99, 102, 241, 0.1)',
+                color: 'var(--accent-color)',
+                border: '1px solid var(--accent-color)',
+                borderRadius: '8px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.7 : 1
+              }}
+            >
+              {loading ? 'SYNCING...' : '✨ SYNC'}
+            </button>
+
+            {showCalendar && (
+              <ExpenseCalendar
+                expenses={expenses}
+                selectedDate={selectedDate}
+                onSelect={(d) => setSelectedDate(d)}
+                onClose={() => setShowCalendar(false)}
+              />
+            )}
+          </div>
         </div>
 
         {syncFeedback.type && (
-          <div style={{ 
-            fontSize: '0.7rem', 
-            padding: '0.5rem 0.75rem', 
-            borderRadius: '6px', 
+          <div style={{
+            fontSize: '0.7rem',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '6px',
             marginBottom: '1rem',
             background: syncFeedback.type === 'success' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
             color: syncFeedback.type === 'success' ? 'var(--success-color)' : '#ef4444',
@@ -430,10 +507,44 @@ export function FinanceGrid() {
           </div>
         )}
 
+        {/* Date-filter indicator. Shown when the user has jumped to a
+            specific day — surfaces the active scope and gives a one-click
+            escape so people don't get stuck in a filtered view. */}
+        {selectedDate && (
+          <div style={{
+            fontSize: '0.7rem',
+            padding: '0.5rem 0.75rem',
+            borderRadius: '6px',
+            marginBottom: '1rem',
+            background: 'rgba(99, 102, 241, 0.08)',
+            color: 'var(--accent-color)',
+            border: '1px solid rgba(99, 102, 241, 0.25)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontWeight: 700 }}>
+              📅 Showing {selectedDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}
+              {dateScopedExpenses.length > 0
+                ? ` · ${dateScopedExpenses.length} txn${dateScopedExpenses.length === 1 ? '' : 's'} · ₹${dateScopedExpenses.reduce((s: number, e: any) => s + e.amount, 0).toLocaleString('en-IN')}`
+                : ' · no spend on this day'}
+            </span>
+            <button
+              onClick={() => setSelectedDate(null)}
+              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+            >
+              Clear ✕
+            </button>
+          </div>
+        )}
+
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {activeTab === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingRight: '0.5rem' }}>
-              {expenses.length > 0 ? expenses.slice(0, 30).map((exp: any, i: number) => (
+              {/* Use dateScopedExpenses so a date jump narrows the list to
+                  that single day. When no date is selected this is the
+                  full expenses array — same behaviour as before. */}
+              {dateScopedExpenses.length > 0 ? dateScopedExpenses.slice(0, 30).map((exp: any, i: number) => (
                 <div
                   key={exp.id}
                   onClick={() => setExpandedCategory(exp.category)}
@@ -479,8 +590,10 @@ export function FinanceGrid() {
                   <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>₹{exp.amount}</div>
                 </div>
               )) : (
-                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-                  No transactions detected.
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.8rem', fontStyle: 'italic', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.5rem' }}>
+                  {selectedDate
+                    ? `No spend recorded on ${selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}.`
+                    : 'No transactions detected.'}
                 </div>
               )}
             </div>
@@ -488,30 +601,36 @@ export function FinanceGrid() {
 
           {activeTab === 1 && (
             <div style={{ width: '100%', height: '240px', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: '-5px', right: '5px', zIndex: 10 }}>
-                <select 
-                  value={pieMonthOffset} 
-                  onChange={e => setPieMonthOffset(Number(e.target.value))}
-                  style={{
-                    background: 'var(--bg-secondary)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    padding: '4px 8px',
-                    borderRadius: '6px',
-                    fontSize: '0.7rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    outline: 'none'
-                  }}
-                >
-                  {Array.from({ length: 4 }).map((_, i) => {
-                    const d = new Date();
-                    d.setMonth(d.getMonth() - i);
-                    const label = i === 0 ? "This Month" : i === 1 ? "Last Month" : d.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    return <option key={i} value={i}>{label}</option>;
-                  })}
-                </select>
-              </div>
+              {/* Hide the month selector while a single-day filter is
+                  active — they'd contradict each other. The user can
+                  Clear the day filter (banner above) to return to the
+                  month-browse mode. */}
+              {!selectedDate && (
+                <div style={{ position: 'absolute', top: '-5px', right: '5px', zIndex: 10 }}>
+                  <select
+                    value={pieMonthOffset}
+                    onChange={e => setPieMonthOffset(Number(e.target.value))}
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      fontSize: '0.7rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                  >
+                    {Array.from({ length: 4 }).map((_, i) => {
+                      const d = new Date();
+                      d.setMonth(d.getMonth() - i);
+                      const label = i === 0 ? "This Month" : i === 1 ? "Last Month" : d.toLocaleString('default', { month: 'short', year: 'numeric' });
+                      return <option key={i} value={i}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+              )}
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -579,7 +698,11 @@ export function FinanceGrid() {
                 </PieChart>
               </ResponsiveContainer>
               <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none' }}>
-                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase' }}>Total Spent</span>
+                <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)', fontWeight: 700, textTransform: 'uppercase' }}>
+                  {selectedDate
+                    ? selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                    : 'Total Spent'}
+                </span>
                 <div style={{ fontSize: '1.1rem', fontWeight: 800 }}>₹{categoryData.reduce((s: number, e: any) => s + e.value, 0).toLocaleString()}</div>
               </div>
               <div style={{ marginTop: '0.4rem', textAlign: 'center', fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600, opacity: 0.75 }}>
