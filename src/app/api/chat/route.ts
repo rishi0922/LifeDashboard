@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getRobustModel } from "@/lib/gemini";
+import { generateContentWithFallback } from "@/lib/gemini";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -220,8 +220,8 @@ export async function POST(req: Request) {
       - CALENDAR: ${calendarContext}
       - TASKS: ${taskContext}
 ${gmailContextLine}      - EXPENSES: ${expenseContext}
-      - HISTORY: Below is the recent interaction history of this session. Use it for context.
-      ${JSON.stringify(messages.slice(0, -1))}
+      - HISTORY: The recent interaction history (last 10 turns max — older turns are intentionally dropped to keep prompt size bounded). Use it for context.
+      ${JSON.stringify(messages.slice(0, -1).slice(-10))}
       
       CAPABILITIES (Output JSON for actions):
       - Create Event: {"action": "create_event", "summary": "Title", "startTime": "YYYY-MM-DDTHH:mm:ss", "endTime": "YYYY-MM-DDTHH:mm:ss"}
@@ -274,9 +274,10 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
       User: ${latestMessage}
     `;
 
-    // 3. Resilience Hub (Robust SDK Utility)
-    const model = await getRobustModel(genAI);
-    const result = await model.generateContent(prompt);
+    // 3. Resilience Hub — call the real prompt with model fallback. No
+    // pre-flight probing (the old pattern burned 20-40s on cold starts
+    // round-tripping each candidate model with a "ping").
+    const result = await generateContentWithFallback(genAI, prompt);
 
     if (!result) {
       throw new Error("All AI models failed to generate content.");
