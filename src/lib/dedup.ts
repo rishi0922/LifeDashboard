@@ -28,7 +28,7 @@
  */
 
 import { prisma } from "./prisma";
-import { normalizeMerchant } from "./expenseClassifier";
+import { normalizeMerchant, isJunkMerchant } from "./expenseClassifier";
 
 export type EmailPurpose = "inbox_sync" | "finance_sync";
 export type EmailOutcome = "task" | "event" | "expense" | "ignored" | "error" | "duplicate";
@@ -103,6 +103,18 @@ export async function markProcessed(params: {
   }
 }
 
+export interface DuplicateMatch {
+  id: string;
+  merchant: string;
+  /**
+   * True when the EXISTING row's merchant is a junk label ("UPI",
+   * "Unknown") while the incoming email carries a real merchant. The
+   * caller should upgrade the existing row with the better identity
+   * instead of just skipping the incoming email.
+   */
+  existingIsJunk: boolean;
+}
+
 /**
  * Check whether an expense with the same transaction fingerprint already
  * exists in the database. This catches the case where the same ₹500 Swiggy
@@ -113,10 +125,14 @@ export async function markProcessed(params: {
  *   1. Fast path: exact fingerprint match (if the fingerprint field is
  *      already populated on older rows).
  *   2. Slow path: query by (userId, amount, date ±1 day) and compare
- *      normalised merchant names in-memory. This covers expenses created
- *      before the fingerprint column was added.
+ *      normalised merchant names in-memory.
+ *   3. Junk-merchant wildcard: bank/UPI alerts often yield no usable
+ *      merchant ("UPI", "Unknown"). Same amount + same day window with a
+ *      junk label on EITHER side is treated as the same transaction —
+ *      that's exactly how Rentomojo ₹841.23 ended up double-counted as
+ *      "UPI ₹841.23" before this rule existed.
  *
- * Returns the existing expense ID if a duplicate is found, null otherwise.
+ * Returns the existing expense (with upgrade hint) or null.
  */
 export async function findDuplicateExpense(params: {
   userId: string;
@@ -124,16 +140,23 @@ export async function findDuplicateExpense(params: {
   normalizedMerchant: string;
   amount: number;
   date: Date;
-}): Promise<string | null> {
+}): Promise<DuplicateMatch | null> {
   // Fast path: fingerprint match
   const fpMatch = await prisma.expense.findFirst({
     where: {
       userId: params.userId,
       fingerprint: params.fingerprint,
     },
-    select: { id: true },
+    select: { id: true, merchant: true },
   });
-  if (fpMatch) return fpMatch.id;
+  if (fpMatch) {
+    return {
+      id: fpMatch.id,
+      merchant: fpMatch.merchant,
+      existingIsJunk:
+        isJunkMerchant(fpMatch.merchant) && !isJunkMerchant(params.normalizedMerchant),
+    };
+  }
 
   // Slow path: amount + date window + merchant similarity
   const dayMs = 86_400_000;
@@ -149,9 +172,25 @@ export async function findDuplicateExpense(params: {
     select: { id: true, merchant: true },
   });
 
+  const incomingJunk = isJunkMerchant(params.normalizedMerchant);
+
   for (const c of candidates) {
-    if (normalizeMerchant(c.merchant) === params.normalizedMerchant) {
-      return c.id;
+    const candidateNorm = normalizeMerchant(c.merchant);
+    const candidateJunk = isJunkMerchant(candidateNorm);
+
+    // Exact same merchant → same transaction.
+    if (candidateNorm === params.normalizedMerchant) {
+      return { id: c.id, merchant: c.merchant, existingIsJunk: false };
+    }
+
+    // Wildcard: one side has no real identity. Same amount within a day
+    // is overwhelmingly the same underlying spend reported twice.
+    if (incomingJunk || candidateJunk) {
+      return {
+        id: c.id,
+        merchant: c.merchant,
+        existingIsJunk: candidateJunk && !incomingJunk,
+      };
     }
   }
 

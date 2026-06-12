@@ -122,6 +122,7 @@ const MERCHANT_RULES: Array<{
 
   // Investments
   { patterns: ["groww"], category: "Investment", subcategory: "broker", merchant: "Groww" },
+  { patterns: ["angel one", "angelone", "angel broking", "angel mf"], category: "Investment", subcategory: "broker", merchant: "Angel One" },
   { patterns: ["zerodha", "kite.zerodha"], category: "Investment", subcategory: "broker", merchant: "Zerodha" },
   { patterns: ["upstox"], category: "Investment", subcategory: "broker", merchant: "Upstox" },
   { patterns: ["indmoney", "ind money"], category: "Investment", subcategory: "broker", merchant: "INDmoney" },
@@ -391,7 +392,7 @@ const MERCHANT_ALIASES: Record<string, string> = {
  * Pipeline: lowercase → trim → strip "pvt ltd" etc → alias lookup → fallback.
  */
 export function normalizeMerchant(raw: string): string {
-  let m = norm(raw)
+  const m = norm(raw)
     .replace(/\b(pvt|private|ltd|limited|llp|inc|corp|technologies|tech)\b\.?/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -429,16 +430,91 @@ export function extractMerchantFromBody(text: string): string | null {
     /(?:at\s+)([a-z][a-z0-9 &.'/-]{1,40})(?:\s+on\s+\d)/i,
   ];
 
+  // Generic words the capture groups sometimes latch onto ("merchant:
+  // name", "paid to your account", …). Returning these as the merchant is
+  // worse than returning nothing.
+  const STOPWORDS = new Set([
+    "name", "you", "your", "the", "this", "that", "amount", "account",
+    "bank", "card", "upi", "vpa", "customer", "user", "merchant", "payee",
+    "beneficiary", "wallet", "a/c", "rs", "inr",
+  ]);
+
   for (const p of patterns) {
     const match = t.match(p);
     if (match && match[1]) {
       const raw = match[1].trim().replace(/\s+/g, " ");
-      // Ignore if it's just a number or very short
+      // Ignore if it's just a number, very short, or a generic stop-word.
       if (raw.length < 3 || /^\d+$/.test(raw)) continue;
+      if (STOPWORDS.has(raw.toLowerCase())) continue;
       return raw;
     }
   }
   return null;
+}
+
+/**
+ * Merchant labels that carry no identity — produced when neither the rules
+ * nor the AI could find the real counterparty in a bank/UPI alert. Rows
+ * with these merchants are treated as wildcards during dedup: a junk row
+ * and a real-merchant row with the same amount on the same day are almost
+ * certainly the same transaction reported by two different emails.
+ */
+const JUNK_MERCHANTS = new Set([
+  "upi",
+  "upi payment",
+  "uco-upi",
+  "unknown",
+  "merchant",
+  "payment",
+  "transaction",
+  "n/a",
+  "na",
+  "",
+]);
+
+/**
+ * Strict check: the merchant is one of the truly identity-less labels.
+ * Use this when deciding whether to OVERWRITE a merchant — a bank name
+ * ("Axis Bank") is a weak identity but still better than "UPI Payment",
+ * so it does NOT count as anonymous.
+ */
+export function isAnonymousMerchant(raw: string | null | undefined): boolean {
+  const m = norm(raw || "").replace(/\s+/g, " ").trim();
+  return JUNK_MERCHANTS.has(m);
+}
+
+/**
+ * Broad check used for DEDUP wildcards: anonymous labels AND bank /
+ * intermediary names. A row whose "merchant" is the reporting bank says
+ * nothing about the real counterparty, so for duplicate detection it
+ * matches any real-merchant row with the same amount ± 1 day.
+ */
+export function isJunkMerchant(raw: string | null | undefined): boolean {
+  const m = norm(raw || "").replace(/\s+/g, " ").trim();
+  if (JUNK_MERCHANTS.has(m)) return true;
+  // Bank senders sometimes leak through as the "merchant".
+  return INTERMEDIARY_SENDERS.some((s) => m === norm(s.name));
+}
+
+/**
+ * Heuristic: does this merchant string look like a PERSON rather than a
+ * business? Used to stop the AI tagging one-off UPI payments to people as
+ * "Subscription"/"Bills". Two-to-four alphabetic words, no digits, no
+ * business suffix, and not a known brand.
+ */
+export function looksLikePersonName(raw: string | null | undefined): boolean {
+  const m = (raw || "").trim();
+  if (!m || /\d/.test(m)) return false;
+  const lower = norm(m);
+  // Known brand or business-y token → not a person.
+  if (MERCHANT_RULES.some((r) => r.patterns.some((p) => lower.includes(p)))) return false;
+  if (/\b(pvt|ltd|limited|llp|inc|corp|technologies|tech|stores?|traders?|enterprises?|solutions?|services?|hospitality|foods?|mart|bazaa?r|agency|industries|bank|finance|financial|capital|securities|broking|insurance|payments?|one|app)\b/.test(lower)) {
+    return false;
+  }
+  const words = m.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  // All words alphabetic (allow initials like "K")
+  return words.every((w) => /^[A-Za-z][A-Za-z.'-]*$/.test(w));
 }
 
 /**

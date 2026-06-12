@@ -12,6 +12,9 @@ import {
   isRefundOrCredit,
   looksRecurring,
   isIntermediarySender,
+  isAnonymousMerchant,
+  isJunkMerchant,
+  looksLikePersonName,
   extractMerchantFromBody,
   normalizeMerchant,
   computeExpenseFingerprint,
@@ -54,7 +57,6 @@ const ALLOWED_CATEGORIES: ExpenseCategory[] = [
  */
 export async function POST(_req: Request) {
   const session = await getServerSession(authOptions);
-  //@ts-ignore
   const accessToken = session?.accessToken;
   const userEmail = session?.user?.email;
 
@@ -290,6 +292,9 @@ STRICT RULES:
 - Categories MUST be one of: ${ALLOWED_CATEGORIES.join(", ")}.
 - Pick the most specific category (e.g. "Subscription" for Netflix, not "Entertainment"; "Groceries" for Blinkit, not "Food").
 - Merchant should be the specific app/shop/biller ("Swiggy", "Uber", "Airtel"). Never return the bank as the merchant.
+- MERCHANT EXTRACTION: bank/UPI alerts usually name the counterparty ("paid to X", "VPA x@okaxis", "towards X"). Extract that name. Only when the email truly contains NO counterparty use "UPI Payment" — never output the bare words "UPI" or "Unknown".
+- PERSON PAYMENTS: when the counterparty is a person's name (e.g. "RAHUL SHARMA", "NarayanaReddy K") rather than a business, category MUST be "Transfer". A person is never a "Subscription", "Bills" or "Shopping".
+- SUBSCRIPTION DISCIPLINE: "Subscription" is ONLY for recognisable recurring services (Netflix, Spotify, Google One, SaaS tools, Rentomojo, gyms). A generic UPI debit is NOT a subscription regardless of amount. Counterparty unclear → "Other"; counterparty is a person → "Transfer".
 - date must be YYYY-MM-DD (fall back to the email Date header if no explicit date is in the body).
 
 OUTPUT: JSON ARRAY, one object per input:
@@ -314,16 +319,36 @@ ${needsAi
         for (const entry of needsAi) {
           const ai = byId.get(entry.email.id);
           if (!ai) continue;
-          const cat = ALLOWED_CATEGORIES.includes(ai.category)
+          let cat = ALLOWED_CATEGORIES.includes(ai.category)
             ? (ai.category as ExpenseCategory)
             : "Other";
+          let merchant: string = String(ai.merchant || "");
+
+          // ── Post-AI guardrails ─────────────────────────────────────
+          // The model occasionally ignores the prompt rules; these are
+          // the code-level backstops for the failure modes we've seen in
+          // production data (person transfers tagged "Subscription",
+          // merchant returned as the literal string "UPI"/"Unknown").
+          if (looksLikePersonName(merchant)) {
+            // A person is a transfer, full stop.
+            cat = "Transfer";
+          }
+          if (isAnonymousMerchant(merchant)) {
+            merchant = "UPI Payment";
+            // With no counterparty identity we can't claim Subscription /
+            // Bills / Shopping. UPI payment mode reads as Transfer,
+            // anything else as Other.
+            if (cat === "Subscription" || cat === "Bills" || cat === "Shopping") {
+              cat = entry.paymentMode === "UPI" ? "Transfer" : "Other";
+            }
+          }
 
           // Prefer rule/keyword category when it exists — AI only fills merchant/subcategory.
           const existing = entry.classified;
           entry.classified = {
             category: existing?.category ? existing.category : cat,
             subcategory: ai.subcategory || existing?.subcategory,
-            merchant: ai.merchant || existing?.merchant,
+            merchant: merchant || existing?.merchant,
             confidence: existing ? Math.max(existing.confidence, 0.75) : 0.75,
             method: existing ? existing.method : "ai",
           };
@@ -388,7 +413,7 @@ ${needsAi
         date: txnDate,
       });
 
-      const existingId = await findDuplicateExpense({
+      const dup = await findDuplicateExpense({
         userId: user.id,
         fingerprint,
         normalizedMerchant: normalizedM,
@@ -396,15 +421,34 @@ ${needsAi
         date: txnDate,
       });
 
-      if (existingId) {
-        // Another email already created this expense — skip.
+      if (dup) {
+        // Another email already created this expense. If the existing row
+        // only has a junk label ("UPI") and THIS email knows the real
+        // merchant (e.g. the Rentomojo receipt arriving after the bank
+        // alert), upgrade the row instead of discarding the better data.
+        if (dup.existingIsJunk && !isJunkMerchant(merchant)) {
+          try {
+            await prisma.expense.update({
+              where: { id: dup.id },
+              data: {
+                merchant,
+                category: c.category,
+                subcategory: c.subcategory,
+                confidence: c.confidence,
+                method: c.method,
+              },
+            });
+          } catch (e) {
+            console.warn(`[finance/sync] junk-merchant upgrade failed for ${dup.id}:`, e);
+          }
+        }
         dupCount++;
         await markProcessed({
           userId: user.id,
           emailId: entry.email.id,
           purpose: "finance_sync",
           outcome: "duplicate",
-          externalRef: existingId,
+          externalRef: dup.id,
           subject: entry.email.subject,
           snippet: entry.email.snippet,
         });
