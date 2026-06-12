@@ -4,6 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell as BarCell
 } from 'recharts';
 import { ExpenseCalendar } from './ExpenseCalendar';
+import { GoalMilestones } from './GoalMilestones';
 
 export function FinanceGrid() {
   const [data, setData] = useState<any>(null);
@@ -248,16 +249,40 @@ export function FinanceGrid() {
     };
   }, [expandedCategory, expenses, pieMonthOffset]);
 
+  // Every category the expense classifier can emit must appear here —
+  // Groceries / Subscription / Transfer were missing, which (combined
+  // with a `x + '20' || fallback` precedence bug producing the literal
+  // string "undefined20") left the user's BIGGEST categories with broken
+  // icon-chip backgrounds in the list and gray pie slices.
   const CATEGORY_COLORS: Record<string, string> = {
     'Food': '#ef4444',
+    'Groceries': '#84cc16',
     'Shopping': '#6366f1',
     'Entertainment': '#a855f7',
+    'Subscription': '#14b8a6',
     'Travel': '#eab308',
     'Investment': '#0ea5e9',
     'Health': '#ec4899',
     'Bills': '#22c55e',
+    'Transfer': '#f97316',
     'Other': '#64748b'
   };
+
+  const CATEGORY_ICONS: Record<string, string> = {
+    'Food': '🍕',
+    'Groceries': '🛒',
+    'Shopping': '🛍️',
+    'Entertainment': '🍿',
+    'Subscription': '🔁',
+    'Travel': '🚕',
+    'Investment': '📈',
+    'Health': '⚕️',
+    'Bills': '🧾',
+    'Transfer': '💸',
+    'Other': '📑'
+  };
+  const categoryColor = (c: string) => CATEGORY_COLORS[c] || '#64748b';
+  const categoryIcon = (c: string) => CATEGORY_ICONS[c] || '📑';
 
   if (loading) {
     return (
@@ -281,8 +306,10 @@ export function FinanceGrid() {
           {/* Equity Side */}
           <div style={{ padding: '0.9rem', background: 'rgba(99, 102, 241, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(99, 102, 241, 0.1)' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>EQUITY PULSE (50%)</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ (data?.stocks?.value / 100000).toFixed(2) } L</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', fontWeight: 600 }}>{data?.stocks?.holdings?.length} Active Holdings</div>
+            {/* ?? 0 guard — missing portfolio data (signed out / API down)
+                used to render the literal "₹NaN L" */}
+            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ ((data?.stocks?.value ?? 0) / 100000).toFixed(2) } L</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--success-color)', fontWeight: 600 }}>{data?.stocks?.holdings?.length ?? 0} Active Holdings</div>
 
             <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                {data?.stocks?.holdings?.slice(0, 2).map((h: any) => (
@@ -297,8 +324,8 @@ export function FinanceGrid() {
           {/* Mutual Fund Side */}
           <div style={{ padding: '0.9rem', background: 'rgba(34, 197, 94, 0.05)', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(34, 197, 94, 0.1)' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>MF PULSE (50%)</span>
-            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ (data?.mutualFunds?.value / 100000).toFixed(2) } L</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--accent-color)', fontWeight: 600 }}>{data?.mutualFunds?.funds?.length} active Portfolios</div>
+            <div style={{ fontSize: '1.4rem', fontWeight: 800, marginTop: '0.35rem' }}>₹{ ((data?.mutualFunds?.value ?? 0) / 100000).toFixed(2) } L</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--accent-color)', fontWeight: 600 }}>{data?.mutualFunds?.funds?.length ?? 0} active Portfolios</div>
 
             <div style={{ marginTop: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                {data?.mutualFunds?.funds?.slice(0, 2).map((f: any) => (
@@ -578,22 +605,17 @@ export function FinanceGrid() {
                   onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.transform = 'translateX(0) scale(1.01)'; (e.currentTarget as HTMLDivElement).style.boxShadow = '0 4px 12px rgba(99,102,241,0.15)'; }}
                   onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.transform = 'translateX(0) scale(1)'; (e.currentTarget as HTMLDivElement).style.boxShadow = 'none'; }}
                 >
-                  <div style={{ 
-                    width: '32px', 
-                    height: '32px', 
-                    borderRadius: '8px', 
-                    background: CATEGORY_COLORS[exp.category] + '20' || 'rgba(34, 197, 94, 0.1)',
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '8px',
+                    background: categoryColor(exp.category) + '20',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     fontSize: '1rem'
                   }}>
-                    {exp.category === 'Food' ? '🍕' : 
-                     exp.category === 'Shopping' ? '🛍️' : 
-                     exp.category === 'Travel' ? '🚕' : 
-                     exp.category === 'Entertainment' ? '🍿' :
-                     exp.category === 'Investment' ? '📈' :
-                     exp.category === 'Health' ? '⚕️' : '📑'}
+                    {categoryIcon(exp.category)}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text-primary)' }}>{exp.merchant}</div>
@@ -760,29 +782,9 @@ export function FinanceGrid() {
         </div>
       </div>
 
-      {/* Goal Tracker */}
+      {/* Goal Tracker — DB-backed + inline editable (see GoalMilestones) */}
       <div className="bento-item goals-area glass-panel animate-scale-in delay-300">
-        <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem' }}>🎯 Goal Milestones</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-              <span>🏍️ Triumph Speed 400</span>
-              <span style={{ fontWeight: 700 }}>45%</span>
-            </div>
-            <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ width: '45%', height: '100%', background: 'var(--accent-color)' }}></div>
-            </div>
-          </div>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.85rem' }}>
-              <span>🎮 PS5</span>
-              <span style={{ fontWeight: 700 }}>60%</span>
-            </div>
-            <div style={{ width: '100%', height: '8px', background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden' }}>
-              <div style={{ width: '60%', height: '100%', background: 'var(--success-color)' }}></div>
-            </div>
-          </div>
-        </div>
+        <GoalMilestones />
       </div>
 
       {/* ── Category Detail Modal ─────────────────────────────────────────
@@ -845,13 +847,7 @@ export function FinanceGrid() {
                   fontSize: '1.5rem',
                   flexShrink: 0
                 }}>
-                  {expandedCategory === 'Food' ? '🍕' :
-                   expandedCategory === 'Shopping' ? '🛍️' :
-                   expandedCategory === 'Travel' ? '🚕' :
-                   expandedCategory === 'Entertainment' ? '🍿' :
-                   expandedCategory === 'Investment' ? '📈' :
-                   expandedCategory === 'Health' ? '⚕️' :
-                   expandedCategory === 'Bills' ? '🧾' : '📑'}
+                  {categoryIcon(expandedCategory)}
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)' }}>{expandedCategory}</div>
