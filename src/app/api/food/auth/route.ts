@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/sessionUser";
 
 /**
  * GET /api/food/auth
@@ -33,16 +32,10 @@ export async function GET(req: Request) {
 
   // Demo linking path — store a local token so ZomatoBridge.getMCPClient
   // returns truthy and downstream calls can proceed (using mocks if the live
-  // MCP server rejects the demo token, which it will).
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  const user = email
-    ? await prisma.user.upsert({
-        where: { email },
-        update: {},
-        create: { email, name: session?.user?.name || email.split("@")[0] },
-      })
-    : await prisma.user.findFirst();
+  // MCP server rejects the demo token, which it will). Session-scoped: a
+  // signed-out visitor must not be able to write a token onto someone
+  // else's account.
+  const user = await getSessionUser();
 
   if (!user) {
     return NextResponse.redirect(`${dashboard}/?zomatoLinked=error&reason=no_user`);
@@ -59,13 +52,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  //@ts-ignore
-  const userId = session?.user?.id;
-  const user = await prisma.user.findFirst(); // Fallback for demo
-  const targetId = userId || user?.id;
-
-  if (!targetId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const targetId = user.id;
 
   try {
     const { code } = await req.json();

@@ -15,7 +15,6 @@ export const dynamic = "force-dynamic";
  */
 export async function POST() {
   const session = await getServerSession(authOptions);
-  // @ts-ignore — session.accessToken is added by the next-auth callbacks
   const accessToken: string | undefined = session?.accessToken;
   const userEmail = session?.user?.email;
 

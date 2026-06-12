@@ -93,7 +93,6 @@ export function CalendarWidget() {
 
   // Proactive Session Check
   useEffect(() => {
-    //@ts-ignore
     if (session?.error === "RefreshAccessTokenError") {
       setSyncStatus("error");
     }
@@ -280,7 +279,6 @@ export function CalendarWidget() {
           animation: 'slideDown 0.3s ease'
         }}>
           <span style={{ fontSize: '0.85rem', color: '#ef4444', fontWeight: 500 }}>
-            {/* @ts-ignore */}
             {session?.error === "RefreshAccessTokenError" 
               ? "Critical Session Failure. Please re-authenticate." 
               : "Sync heartbeat lost or session expired."}

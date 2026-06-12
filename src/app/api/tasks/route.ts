@@ -1,39 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getSessionUser } from "@/lib/sessionUser";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Returns the signed-in user (upserting if needed).
- * Falls back to the first user only when nobody is logged in — this is
- * important because /api/gmail/sync writes tasks under session.user.email,
- * while the previous findFirst() often returned a stale dev user
- * ("dummy@local.dev") making the Priorities panel look empty even though
- * tasks existed for the real user.
- */
-async function getOrCreateUser() {
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  if (email) {
-    return prisma.user.upsert({
-      where: { email },
-      update: {},
-      create: {
-        email,
-        name: session.user?.name || email.split("@")[0],
-      },
-    });
-  }
-  let user = await prisma.user.findFirst();
-  if (!user) user = await prisma.user.create({ data: { name: "Chief", email: "dummy@local.dev" }});
-  return user;
-}
-
 export async function GET() {
   try {
-    const user = await getOrCreateUser();
+    // Session-scoped only. The old fallback (findFirst, else create a
+    // "dummy@local.dev" stub) meant a signed-out request could read the
+    // first real user's tasks on a deployed instance. Signed-out now
+    // simply sees an empty list.
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ tasks: [] });
 
     // --- Dynamic Cleanup Logic ---
     // We only want to prune things the user has already handled or that are
@@ -75,7 +53,8 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const { title, category } = await req.json();
-    const user = await getOrCreateUser();
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const task = await prisma.task.create({
       data: {

@@ -79,8 +79,7 @@ export const authOptions: NextAuthOptions = {
 
       // Return previous token if the access token has not expired yet
       // We add a 60-second buffer to avoid race conditions
-      //@ts-ignore
-      const shouldRefreshTime = (token.accessTokenExpires as number) - 60 * 1000;
+      const shouldRefreshTime = (token.accessTokenExpires ?? 0) - 60 * 1000;
       if (Date.now() < shouldRefreshTime) {
         return token;
       }
@@ -89,11 +88,8 @@ export const authOptions: NextAuthOptions = {
       return refreshAccessToken(token);
     },
     async session({ session, token }) {
-      //@ts-ignore
       session.user = token.user;
-      //@ts-ignore
       session.accessToken = token.accessToken;
-      //@ts-ignore
       session.error = token.error;
 
       return session;

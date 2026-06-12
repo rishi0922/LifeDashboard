@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/sessionUser";
 
 import { ZomatoBridge } from "@/lib/zomato";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
-    const user = await prisma.user.findFirst(); // Fallback for demo
-
-    if (!user) return NextResponse.json({ orders: [], isLinked: false }, { status: 404 });
+    // Session-scoped. The old findFirst() fallback read whichever user row
+    // was inserted first (the dev stub), so the widget showed the wrong
+    // account's orders and "not linked" even when the real user had a
+    // ZOMATO_TOKEN saved.
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ orders: [], isLinked: false });
 
     // 1. Verify Real Token for true "isLinked" status
     const tokenPref = await prisma.userPreference.findUnique({
@@ -41,9 +42,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    const user = await prisma.user.findFirst();
-    
+    const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();

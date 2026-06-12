@@ -24,7 +24,6 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   try {
     const session = await getServerSession(authOptions);
-    //@ts-ignore
     const accessToken = session?.accessToken;
     const userEmail = session?.user?.email;
 

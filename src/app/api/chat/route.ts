@@ -25,7 +25,6 @@ export async function POST(req: Request) {
     }
 
     const session = await getServerSession(authOptions);
-    //@ts-ignore
     const accessToken = session?.accessToken;
     const userEmail = session?.user?.email || "dummy@local.dev";
     
@@ -541,7 +540,6 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
                update: {},
                create: { email: userEmail, name: session?.user?.name || userEmail.split('@')[0] }
              });
-             //@ts-ignore
              await prisma.foodOrder.create({ data: { restaurant: cmd.restaurant, items: cmd.items, cost: cmd.cost || 0, etaMinutes: cmd.etaMinutes || 30, userId: userObj.id }});
              executionMessages.push(`🍕 Ordered ${cmd.items} from ${cmd.restaurant}`);
           } else if (cmd.action === "save_preference") {

@@ -8,7 +8,6 @@ export async function GET(req: Request) {
   
   const session = await getServerSession(authOptions);
 
-  //@ts-ignore
   const accessToken = session?.accessToken;
 
   if (!accessToken) {
@@ -58,7 +57,6 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  //@ts-ignore
   const accessToken = session?.accessToken;
 
   if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -104,7 +102,6 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   const session = await getServerSession(authOptions);
-  //@ts-ignore
   const accessToken = session?.accessToken;
   const { searchParams } = new URL(req.url);
   const eventId = searchParams.get("eventId");

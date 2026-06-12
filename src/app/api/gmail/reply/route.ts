@@ -21,7 +21,6 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    //@ts-ignore
     const accessToken = session?.accessToken;
     if (!accessToken) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

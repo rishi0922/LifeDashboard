@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { ZomatoBridge } from "@/lib/zomato";
+import { getSessionUser } from "@/lib/sessionUser";
 
 export async function POST(req: Request) {
   try {
     const { action, restaurant, item, cartId } = await req.json();
 
-    // Get user for ZomatoBridge calls
-    const user = await prisma.user.findFirst();
-    const userId = user?.id || "anonymous";
+    // Session-scoped — the cart must belong to the signed-in user, not
+    // whichever row findFirst() happened to return.
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const userId = user.id;
 
     if (action === "PREPARE_CART") {
       // Step 1: Initialize an autonomous cart preparation

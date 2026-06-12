@@ -5,7 +5,6 @@ import { fetchGmailSnippets } from "@/lib/gmail";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  //@ts-ignore
   const accessToken = session?.accessToken;
 
   if (!accessToken) {

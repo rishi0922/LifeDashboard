@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getRobustModel, parseAIJson } from "@/lib/gemini";
 import { prisma } from "@/lib/prisma";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { getSessionUser } from "@/lib/sessionUser";
 
 interface NewsItem {
   title: string;
@@ -55,27 +54,11 @@ let newsCache: {
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-async function getOrCreateUser() {
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-  if (email) {
-    return prisma.user.upsert({
-      where: { email },
-      update: {},
-      create: {
-        email,
-        name: session.user?.name || email.split("@")[0],
-      },
-    });
-  }
-  let user = await prisma.user.findFirst();
-  if (!user) {
-    user = await prisma.user.create({
-      data: { name: "Chief", email: "dummy@local.dev" }
-    });
-  }
-  return user;
-}
+// Session-scoped user resolution lives in lib/sessionUser. Signed-out
+// visitors still get news (it's public RSS) — they just read with the
+// default profile and their clicks aren't recorded. The old fallback
+// (findFirst / create dummy) wrote personalization weights onto an
+// arbitrary user row.
 
 async function getNewsProfile(userId: string): Promise<NewsProfile> {
   const pref = await prisma.userPreference.findUnique({
@@ -248,8 +231,8 @@ const FALLBACK_NEWS: Omit<NewsData, "forYou"> = {
 
 export async function GET() {
   try {
-    const user = await getOrCreateUser();
-    const profile = await getNewsProfile(user.id);
+    const user = await getSessionUser();
+    const profile = user ? await getNewsProfile(user.id) : DEFAULT_PROFILE;
 
     // 1. Resolve RSS Feeds Cache
     let cachedFeeds = newsCache?.data;
@@ -415,7 +398,12 @@ Respond ONLY in JSON format as an array of objects:
 
 export async function PATCH(req: Request) {
   try {
-    const user = await getOrCreateUser();
+    // Interaction tracking is meaningless without a signed-in user —
+    // acknowledge as a no-op rather than erroring so the widget's
+    // click handlers stay quiet when signed out.
+    const user = await getSessionUser();
+    if (!user) return NextResponse.json({ success: true, skipped: "no session" });
+
     const { action, category, title } = await req.json();
 
     if (!action || !category || !title) {
