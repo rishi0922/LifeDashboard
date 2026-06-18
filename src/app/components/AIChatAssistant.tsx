@@ -10,6 +10,67 @@ export function AIChatAssistant() {
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // ── Voice I/O state ──────────────────────────────────────────────
+  // voiceMode: when on, replies are spoken aloud. isListening: mic is
+  // actively transcribing. isSpeaking: audio is currently playing.
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  // Ref mirror so the async processInput closure reads the current mode.
+  const voiceModeRef = useRef(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+
+  // Detect browser STT support once on mount (Chrome/Edge: yes).
+  useEffect(() => {
+    setVoiceSupported(
+      typeof window !== "undefined" &&
+        !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+    );
+  }, []);
+
+  // Speak text: try the natural Neural2 voice via /api/tts, and fall
+  // back to the browser's built-in voice if no key is configured or the
+  // call fails. Cancels any in-flight speech first so replies don't overlap.
+  const speak = async (text: string) => {
+    const clean = (text || "").replace(/[*_`#>]/g, "").trim();
+    if (!clean) return;
+
+    const browserSpeak = () => {
+      if (typeof window === "undefined" || !window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(clean);
+      u.onstart = () => setIsSpeaking(true);
+      u.onend = () => setIsSpeaking(false);
+      window.speechSynthesis.speak(u);
+    };
+
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: clean }),
+      });
+      const data = await res.json();
+      if (data.audioContent) {
+        if (audioRef.current) audioRef.current.pause();
+        const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+        audioRef.current = audio;
+        setIsSpeaking(true);
+        audio.onended = () => setIsSpeaking(false);
+        audio.onerror = () => { setIsSpeaking(false); browserSpeak(); };
+        await audio.play();
+      } else {
+        browserSpeak();
+      }
+    } catch {
+      browserSpeak();
+    }
+  };
+
   // Load history from LocalStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('chat_history');
@@ -70,7 +131,13 @@ export function AIChatAssistant() {
       }
       
       setMessages(prev => [...prev, data]);
-      
+
+      // In voice mode, read the reply aloud. Fire-and-forget so the UI
+      // and the cross-component refresh events below aren't blocked.
+      if (voiceModeRef.current && data?.content) {
+        speak(data.content);
+      }
+
       // Notify other components if a mutation took place. We send the IST
       // date of the mutated event along with the signal so CalendarWidget can
       // jump to the right day — otherwise a user asking chat to create a
@@ -126,6 +193,65 @@ export function AIChatAssistant() {
     setInput("");
   };
 
+  // Mic toggle: start/stop live transcription. On a final result we send
+  // it straight through the existing processInput path — so a spoken
+  // command creates tasks/events exactly like a typed one. Turning the
+  // mic on implies voice mode (the user wants to converse, not type).
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Ctor) return;
+
+    // Speaking implies a voice conversation — auto-enable spoken replies.
+    if (!voiceMode) setVoiceMode(true);
+
+    const recognition = new Ctor();
+    recognition.lang = "en-IN";
+    recognition.interimResults = true;
+    recognition.continuous = false;
+
+    let finalText = "";
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += chunk;
+        else interim += chunk;
+      }
+      setInput(finalText || interim);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      const text = finalText.trim();
+      if (text) {
+        processInput(text);
+        setInput("");
+      }
+    };
+
+    recognitionRef.current = recognition;
+    setIsListening(true);
+    recognition.start();
+  };
+
+  // Stop any audio + recognition when the panel closes so a reply doesn't
+  // keep talking into a closed window.
+  useEffect(() => {
+    if (!isOpen) {
+      recognitionRef.current?.abort();
+      audioRef.current?.pause();
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      setIsListening(false);
+      setIsSpeaking(false);
+    }
+  }, [isOpen]);
+
   return (
     <>
       {/* Floating Chat Button */}
@@ -166,10 +292,37 @@ export function AIChatAssistant() {
           boxShadow: '0 20px 50px rgba(0,0,0,0.15)',
           border: '1px solid var(--border-color)',
         }}>
-          <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)' }}>
+          <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
             <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               ✨ Gemini Assistant
             </h3>
+            {/* Voice-mode toggle: when on, replies are spoken aloud.
+                isSpeaking shows a live indicator; click while speaking
+                stops playback. */}
+            <button
+              onClick={() => {
+                if (isSpeaking) {
+                  audioRef.current?.pause();
+                  if (window.speechSynthesis) window.speechSynthesis.cancel();
+                  setIsSpeaking(false);
+                }
+                setVoiceMode(v => !v);
+              }}
+              title={voiceMode ? "Voice replies on" : "Voice replies off"}
+              aria-label="Toggle voice replies"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                padding: '0.35rem 0.7rem', borderRadius: 'var(--radius-xl)',
+                fontSize: '0.7rem', fontWeight: 700,
+                border: `1px solid ${voiceMode ? 'var(--accent-color)' : 'var(--border-color)'}`,
+                background: voiceMode ? 'var(--accent-color)' : 'transparent',
+                color: voiceMode ? '#fff' : 'var(--text-secondary)',
+                transition: 'var(--transition-smooth)',
+              }}
+            >
+              <span className={isSpeaking ? 'animate-pulse' : ''}>{voiceMode ? '🔊' : '🔇'}</span>
+              {isSpeaking ? 'Speaking' : voiceMode ? 'Voice' : 'Muted'}
+            </button>
           </div>
           
           <div 
@@ -210,11 +363,28 @@ export function AIChatAssistant() {
           </div>
 
           <form onSubmit={handleSend} style={{ padding: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem', background: 'var(--bg-secondary)' }}>
-            <input 
-              type="text" 
+            {voiceSupported && (
+              <button
+                type="button"
+                onClick={toggleListening}
+                className="btn-icon"
+                title={isListening ? "Stop listening" : "Speak"}
+                aria-label={isListening ? "Stop listening" : "Speak to assistant"}
+                style={{
+                  background: isListening ? 'var(--danger-color, #ff3b30)' : 'var(--bg-primary)',
+                  color: isListening ? '#fff' : 'var(--text-primary)',
+                  border: '1px solid var(--border-color)',
+                  flexShrink: 0,
+                }}
+              >
+                <span className={isListening ? 'animate-pulse' : ''}>🎙️</span>
+              </button>
+            )}
+            <input
+              type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask anything..." 
+              placeholder={isListening ? "Listening…" : "Ask anything..."}
               style={{
                 flex: 1,
                 padding: '0.75rem',
@@ -225,16 +395,17 @@ export function AIChatAssistant() {
                 color: 'var(--text-primary)'
               }}
             />
-            <button 
-              type="submit" 
-              className="btn-icon" 
+            <button
+              type="submit"
+              className="btn-icon"
               disabled={isLoading}
-              style={{ 
-                background: isLoading ? 'var(--text-secondary)' : 'var(--accent-color)', 
-                color: '#fff', 
+              style={{
+                background: isLoading ? 'var(--text-secondary)' : 'var(--accent-color)',
+                color: '#fff',
                 border: 'none',
                 opacity: isLoading ? 0.7 : 1,
-                cursor: isLoading ? 'not-allowed' : 'pointer'
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                flexShrink: 0,
               }}
             >
               {isLoading ? '⌛' : '↑'}
