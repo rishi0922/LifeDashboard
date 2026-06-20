@@ -25,11 +25,30 @@ const CATEGORY_STYLE: Record<string, { color: string; icon: string }> = {
 };
 const catStyle = (c: string) => CATEGORY_STYLE[c] || CATEGORY_STYLE.Note;
 
+// Note category → Priorities (Task) category. The TaskManager only knows
+// Urgent / Work / Personal.
+const TASK_CATEGORY: Record<string, string> = {
+  Reminder: "Urgent",
+  Meeting: "Work",
+  Work: "Work",
+  Task: "Work",
+  Personal: "Personal",
+  Idea: "Personal",
+  Note: "Work",
+};
+
+// Deterministic, idempotent key for an action item → task conversion.
+const itemKey = (noteId: string, index: number) => `note-${noteId}-${index}`;
+
 export function NotesPanel() {
   const [draft, setDraft] = useState("");
   const [notes, setNotes] = useState<Note[]>([]);
   const [isCapturing, setIsCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // externalIds of action items already turned into tasks — populated
+  // from /api/tasks so the "Added" state survives reloads.
+  const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set());
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const stt = useSpeechRecognition({
     lang: "en-IN",
@@ -47,12 +66,69 @@ export function NotesPanel() {
     }
   };
 
+  // Learn which action items are already tasks by matching task
+  // externalIds against our "note-<id>-<index>" key scheme.
+  const fetchAddedKeys = async () => {
+    try {
+      const res = await fetch("/api/tasks");
+      if (!res.ok) return;
+      const data = await res.json();
+      const keys = new Set<string>();
+      for (const t of data.tasks || []) {
+        if (typeof t.externalId === "string" && t.externalId.startsWith("note-")) {
+          keys.add(t.externalId);
+        }
+      }
+      setAddedKeys(keys);
+    } catch {
+      /* non-fatal — items just show as not-yet-added */
+    }
+  };
+
   useEffect(() => {
     fetchNotes();
+    fetchAddedKeys();
     const onRefresh = () => fetchNotes();
     window.addEventListener("refreshNotes", onRefresh);
     return () => window.removeEventListener("refreshNotes", onRefresh);
   }, []);
+
+  // Convert one action item into a task (idempotent via externalId).
+  const addItemAsTask = async (note: Note, item: string, index: number) => {
+    const key = itemKey(note.id, index);
+    if (addedKeys.has(key) || busyKey === key) return;
+    setBusyKey(key);
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item,
+          category: TASK_CATEGORY[note.category] || "Work",
+          externalId: key,
+        }),
+      });
+      if (res.ok) {
+        setAddedKeys((prev) => new Set(prev).add(key));
+        window.dispatchEvent(new Event("refreshTasks"));
+        window.dispatchEvent(new Event("refreshGamification"));
+      }
+    } catch {
+      /* swallow — user can retry */
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const addAllFromNote = async (note: Note, items: string[]) => {
+    for (let i = 0; i < items.length; i++) {
+      if (!addedKeys.has(itemKey(note.id, i))) {
+        // Sequential so points/refresh events settle in order.
+        // eslint-disable-next-line no-await-in-loop
+        await addItemAsTask(note, items[i], i);
+      }
+    }
+  };
 
   const capture = async () => {
     const text = draft.trim();
@@ -213,16 +289,51 @@ export function NotesPanel() {
                   {n.summary || n.content}
                 </p>
 
-                {items.length > 0 && (
-                  <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                    {items.map((it, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "0.4rem", fontSize: "0.76rem", color: "var(--text-primary)" }}>
-                        <span style={{ color: cs.color, fontWeight: 800, lineHeight: 1.4 }}>○</span>
-                        <span>{it}</span>
+                {items.length > 0 && (() => {
+                  const unaddedCount = items.filter((_, i) => !addedKeys.has(itemKey(n.id, i))).length;
+                  return (
+                    <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: "0.6rem", fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                          Action items
+                        </span>
+                        {unaddedCount > 0 && (
+                          <button
+                            onClick={() => addAllFromNote(n, items)}
+                            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.65rem", fontWeight: 700, color: cs.color, padding: 0 }}
+                          >
+                            + Add all to Priorities
+                          </button>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+                      {items.map((it, i) => {
+                        const key = itemKey(n.id, i);
+                        const added = addedKeys.has(key);
+                        const busy = busyKey === key;
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => addItemAsTask(n, it, i)}
+                            disabled={added || busy}
+                            title={added ? "Added to Priorities" : "Add to Priorities"}
+                            style={{
+                              display: "flex", alignItems: "flex-start", gap: "0.45rem",
+                              fontSize: "0.76rem", textAlign: "left", width: "100%",
+                              background: "none", border: "none", padding: "1px 0",
+                              cursor: added ? "default" : "pointer",
+                              color: added ? "var(--text-secondary)" : "var(--text-primary)",
+                            }}
+                          >
+                            <span style={{ color: added ? "var(--success-color)" : cs.color, fontWeight: 800, lineHeight: 1.45, flexShrink: 0 }}>
+                              {busy ? "⋯" : added ? "✓" : "+"}
+                            </span>
+                            <span style={{ textDecoration: added ? "line-through" : "none" }}>{it}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })

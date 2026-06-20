@@ -52,14 +52,25 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { title, category } = await req.json();
+    const { title, category, externalId } = await req.json();
     const user = await getSessionUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Idempotency: when a caller supplies an externalId (e.g. a note
+    // action item converted to a task, keyed "note-<id>-<index>"), a
+    // repeat conversion — a double click or a re-add after reload —
+    // returns the existing task instead of creating a duplicate, and
+    // does not award points again.
+    if (externalId) {
+      const existing = await prisma.task.findUnique({ where: { externalId } });
+      if (existing) return NextResponse.json({ task: existing, deduped: true });
+    }
 
     const task = await prisma.task.create({
       data: {
         title,
         category: category || "Work",
+        externalId: externalId || undefined,
         userId: user.id
       }
     });
