@@ -41,12 +41,19 @@ model Task {
 }
 
 model Note {
-  id        String   @id @default(cuid())
-  content   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id @default(cuid())
+  content     String   // cleaned / structured body
+  title       String?  // short AI-generated headline
+  category    String   @default("Note") // Idea, Task, Meeting, Personal, Work, Reminder, Note
+  summary     String?  // one-line gist
+  actionItems String?  // JSON string array of extracted to-dos
+  source      String   @default("manual") // manual | voice | chat
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model FoodOrder {

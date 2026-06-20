@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
 
 export function AIChatAssistant() {
   const [isOpen, setIsOpen] = useState(false);
@@ -14,23 +15,26 @@ export function AIChatAssistant() {
   // voiceMode: when on, replies are spoken aloud. isListening: mic is
   // actively transcribing. isSpeaking: audio is currently playing.
   const [voiceMode, setVoiceMode] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [voiceSupported, setVoiceSupported] = useState(false);
   // Ref mirror so the async processInput closure reads the current mode.
   const voiceModeRef = useRef(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
 
-  // Detect browser STT support once on mount (Chrome/Edge: yes).
-  useEffect(() => {
-    setVoiceSupported(
-      typeof window !== "undefined" &&
-        !!(window.SpeechRecognition || window.webkitSpeechRecognition),
-    );
-  }, []);
+  // Speech-to-text via the shared hook. Live results stream into the
+  // input box; a completed utterance is sent through processInput so a
+  // spoken command runs exactly like a typed one.
+  const stt = useSpeechRecognition({
+    lang: "en-IN",
+    onResult: (text) => setInput(text),
+    onFinal: (text) => {
+      processInput(text);
+      setInput("");
+    },
+  });
+  const isListening = stt.listening;
+  const voiceSupported = stt.supported;
 
   // Speak text: try the natural Neural2 voice via /api/tts, and fall
   // back to the browser's built-in voice if no key is configured or the
@@ -193,63 +197,25 @@ export function AIChatAssistant() {
     setInput("");
   };
 
-  // Mic toggle: start/stop live transcription. On a final result we send
-  // it straight through the existing processInput path — so a spoken
-  // command creates tasks/events exactly like a typed one. Turning the
-  // mic on implies voice mode (the user wants to converse, not type).
+  // Mic toggle: turning the mic on implies a voice conversation, so we
+  // auto-enable spoken replies. The hook handles start/stop + dispatch.
   const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Ctor) return;
-
-    // Speaking implies a voice conversation — auto-enable spoken replies.
-    if (!voiceMode) setVoiceMode(true);
-
-    const recognition = new Ctor();
-    recognition.lang = "en-IN";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-
-    let finalText = "";
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += chunk;
-        else interim += chunk;
-      }
-      setInput(finalText || interim);
-    };
-    recognition.onerror = () => setIsListening(false);
-    recognition.onend = () => {
-      setIsListening(false);
-      const text = finalText.trim();
-      if (text) {
-        processInput(text);
-        setInput("");
-      }
-    };
-
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    recognition.start();
+    if (!isListening && !voiceMode) setVoiceMode(true);
+    stt.toggle();
   };
 
   // Stop any audio + recognition when the panel closes so a reply doesn't
   // keep talking into a closed window.
   useEffect(() => {
     if (!isOpen) {
-      recognitionRef.current?.abort();
+      stt.abort();
       audioRef.current?.pause();
       if (typeof window !== "undefined" && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
-      setIsListening(false);
       setIsSpeaking(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   return (
