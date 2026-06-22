@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { GamificationBar } from "./components/GamificationBar";
 import { DashboardGrid } from "./components/DashboardGrid";
 import { AIChatAssistant } from "./components/AIChatAssistant";
@@ -8,8 +9,10 @@ import { DashboardHeader } from "./components/DashboardHeader";
 import { FinanceGrid } from "./components/FinanceGrid";
 import { InboxScout } from "./components/InboxScout";
 import { BudgetGuardian } from "./components/BudgetGuardian";
+import { LandingPage } from "./components/LandingPage";
 
 export default function DashboardPage() {
+  const { status } = useSession();
   const [activeTab, setActiveTab] = useState(0); // 0: Command Center, 1: Finance
   const totalTabs = 2;
 
@@ -17,6 +20,23 @@ export default function DashboardPage() {
   const prevTab = () => setActiveTab((prev) => (prev - 1 + totalTabs) % totalTabs);
 
   const tabTitles = ["Chief Command", "Finance Intelligence"];
+
+  // Signed-out visitors get the marketing landing page; signed-in users
+  // get the dashboard. During the brief auth check we show a minimal
+  // loader so an authenticated user doesn't see a flash of the landing.
+  if (status === "loading") {
+    return (
+      <main className="min-h-screen" style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-primary)" }}>
+        <div className="animate-pulse" style={{ display: "flex", alignItems: "center", gap: "0.6rem", color: "var(--text-secondary)", fontWeight: 700 }}>
+          <span style={{ fontSize: "1.4rem" }}>✦</span> Command Center
+        </div>
+      </main>
+    );
+  }
+
+  if (status === "unauthenticated") {
+    return <LandingPage />;
+  }
 
   return (
     <main className="min-h-screen" style={{ background: 'var(--bg-primary)', paddingBottom: '5rem' }}>
