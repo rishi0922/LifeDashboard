@@ -67,30 +67,19 @@ const FEATURES: Array<{ icon: string; title: string; desc: string; accent: strin
 ];
 
 export function LandingPage() {
-  const cta = (label: string, primary = true) => (
+  // Primary CTA → Google sign-in. Used in the hero and the closing CTA.
+  const cta = (label: string) => (
     <button
       onClick={() => signIn("google")}
-      className={primary ? "btn-primary" : ""}
-      style={
-        primary
-          ? { padding: "0.9rem 1.75rem", borderRadius: "var(--radius-xl)", fontSize: "1rem" }
-          : {
-              padding: "0.9rem 1.75rem",
-              borderRadius: "var(--radius-xl)",
-              fontSize: "1rem",
-              fontWeight: 600,
-              background: "var(--bg-secondary)",
-              color: "var(--text-primary)",
-              border: "1px solid var(--border-color)",
-            }
-      }
+      className="btn-primary"
+      style={{ padding: "0.9rem 1.75rem", borderRadius: "var(--radius-xl)", fontSize: "1rem" }}
     >
       {label}
     </button>
   );
 
   return (
-    <main className="landing" style={{ minHeight: "100vh" }}>
+    <main className="landing" style={{ minHeight: "100vh", scrollBehavior: "smooth" }}>
       {/* ── Nav ───────────────────────────────────────────────── */}
       <nav className="page-container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.25rem 3rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", fontWeight: 800, fontSize: "1.15rem", fontFamily: "'Outfit', sans-serif" }}>
@@ -120,7 +109,23 @@ export function LandingPage() {
         </p>
         <div className="animate-fade-in delay-200" style={{ display: "flex", gap: "0.85rem", flexWrap: "wrap", justifyContent: "center" }}>
           {cta("Get started with Google")}
-          <a href="#features">{cta("Explore features", false)}</a>
+          <a
+            href="#features"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "0.9rem 1.75rem",
+              borderRadius: "var(--radius-xl)",
+              fontSize: "1rem",
+              fontWeight: 600,
+              background: "var(--bg-secondary)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-color)",
+            }}
+          >
+            Explore features
+          </a>
         </div>
         <p className="animate-fade-in delay-300" style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "1.25rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
           🔒 Connects securely with your Google Calendar & Gmail
