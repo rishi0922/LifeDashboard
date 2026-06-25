@@ -19,12 +19,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export interface UseSpeechRecognitionOptions {
   lang?: string;
+  /**
+   * Grace period (ms) of silence before an utterance is treated as
+   * complete. The recogniser runs in continuous mode and the timer is
+   * reset on every speech result — so pausing to think doesn't cut the
+   * user off mid-sentence. Default 3000.
+   */
+  silenceMs?: number;
   onResult?: (text: string) => void;
   onFinal?: (text: string) => void;
 }
 
 export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
-  const { lang = "en-IN", onResult, onFinal } = opts;
+  const { lang = "en-IN", silenceMs = 3000, onResult, onFinal } = opts;
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -62,9 +69,20 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     const recognition = new Ctor();
     recognition.lang = lang;
     recognition.interimResults = true;
-    recognition.continuous = false;
+    // Continuous so the session survives natural pauses; we decide when
+    // the user is done via our own silence timer below.
+    recognition.continuous = true;
 
     let finalText = "";
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    const armSilence = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        try { recognition.stop(); } catch { /* already stopped */ }
+      }, silenceMs);
+    };
+
+    recognition.onstart = () => armSilence();
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -72,10 +90,15 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
         if (event.results[i].isFinal) finalText += chunk;
         else interim += chunk;
       }
-      onResultRef.current?.(finalText || interim);
+      onResultRef.current?.((finalText + interim).trim());
+      armSilence(); // any speech resets the grace window
     };
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      setListening(false);
+    };
     recognition.onend = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
       setListening(false);
       const text = finalText.trim();
       if (text) onFinalRef.current?.(text);
@@ -84,7 +107,7 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     recognitionRef.current = recognition;
     setListening(true);
     recognition.start();
-  }, [lang]);
+  }, [lang, silenceMs]);
 
   const toggle = useCallback(() => {
     if (listening) stop();

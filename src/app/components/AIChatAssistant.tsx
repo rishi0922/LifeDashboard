@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
+import { createBargeInDetector } from "@/lib/voiceActivity";
+
+type NewsItem = { title: string; category: string; source: string; link: string; description: string };
 
 export function AIChatAssistant() {
   const [isOpen, setIsOpen] = useState(false);
@@ -19,14 +22,21 @@ export function AIChatAssistant() {
   // Ref mirror so the async processInput closure reads the current mode.
   const voiceModeRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Tear-down for the active barge-in detector, if any.
+  const bargeStopRef = useRef<(() => void) | null>(null);
+  // Latest Intelligence Feed items, sent with each chat turn so the
+  // assistant can summarise news and open the exact article on request.
+  const newsRef = useRef<NewsItem[]>([]);
 
   useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
 
   // Speech-to-text via the shared hook. Live results stream into the
   // input box; a completed utterance is sent through processInput so a
-  // spoken command runs exactly like a typed one.
+  // spoken command runs exactly like a typed one. The 3s grace period
+  // lets the user pause to think without being cut off.
   const stt = useSpeechRecognition({
     lang: "en-IN",
+    silenceMs: 3000,
     onResult: (text) => setInput(text),
     onFinal: (text) => {
       processInput(text);
@@ -61,12 +71,30 @@ export function AIChatAssistant() {
       const data = await res.json();
       if (data.audioContent) {
         if (audioRef.current) audioRef.current.pause();
+        bargeStopRef.current?.();
+        bargeStopRef.current = null;
         const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
         audioRef.current = audio;
         setIsSpeaking(true);
-        audio.onended = () => setIsSpeaking(false);
-        audio.onerror = () => { setIsSpeaking(false); browserSpeak(); };
+
+        const stopBarge = () => { bargeStopRef.current?.(); bargeStopRef.current = null; };
+        audio.onended = () => { setIsSpeaking(false); stopBarge(); };
+        audio.onerror = () => { setIsSpeaking(false); stopBarge(); browserSpeak(); };
         await audio.play();
+
+        // Barge-in: while the reply plays, listen for the user starting to
+        // talk. If they do, stop the audio and start transcribing them.
+        createBargeInDetector(() => {
+          audio.pause();
+          setIsSpeaking(false);
+          bargeStopRef.current = null;
+          if (!stt.listening) stt.start();
+        }).then((stop) => {
+          // If the clip already finished while we were setting up, don't
+          // leave a detector running.
+          if (audio.paused || audio.ended) stop();
+          else bargeStopRef.current = stop;
+        });
       } else {
         browserSpeak();
       }
@@ -113,7 +141,10 @@ export function AIChatAssistant() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...messagesRef.current, { role: 'user', content: inputText }] })
+        body: JSON.stringify({
+          messages: [...messagesRef.current, { role: 'user', content: inputText }],
+          newsContext: newsRef.current,
+        })
       });
       
       const contentType = response.headers.get("content-type");
@@ -140,6 +171,11 @@ export function AIChatAssistant() {
       // and the cross-component refresh events below aren't blocked.
       if (voiceModeRef.current && data?.content) {
         speak(data.content);
+      }
+
+      // The assistant asked to open a news article the user confirmed.
+      if (data.openUrl) {
+        window.open(data.openUrl, "_blank", "noopener");
       }
 
       // Notify other components if a mutation took place. We send the IST
@@ -191,6 +227,42 @@ export function AIChatAssistant() {
     return () => window.removeEventListener('brainDump', handleBrainDump);
   }, []);
 
+  // Keep a compact copy of the Intelligence Feed so the assistant can
+  // summarise news and open the exact article. Flatten all categories,
+  // dedupe by link, cap at 30 to keep the prompt lean. Refreshed every
+  // 5 min to match the news widget's cache window.
+  useEffect(() => {
+    const loadNews = async () => {
+      try {
+        const res = await fetch("/api/news");
+        if (!res.ok) return;
+        const data = await res.json();
+        const seen = new Set<string>();
+        const items: NewsItem[] = [];
+        for (const key of Object.keys(data)) {
+          if (!Array.isArray(data[key])) continue;
+          for (const it of data[key]) {
+            if (!it?.link || seen.has(it.link)) continue;
+            seen.add(it.link);
+            items.push({
+              title: it.title,
+              category: it.category || key,
+              source: it.source,
+              link: it.link,
+              description: (it.description || "").slice(0, 240),
+            });
+            if (items.length >= 30) break;
+          }
+          if (items.length >= 30) break;
+        }
+        newsRef.current = items;
+      } catch { /* non-fatal — assistant just won't have news context */ }
+    };
+    loadNews();
+    const id = setInterval(loadNews, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     processInput(input);
@@ -209,6 +281,8 @@ export function AIChatAssistant() {
   useEffect(() => {
     if (!isOpen) {
       stt.abort();
+      bargeStopRef.current?.();
+      bargeStopRef.current = null;
       audioRef.current?.pause();
       if (typeof window !== "undefined" && window.speechSynthesis) {
         window.speechSynthesis.cancel();

@@ -29,8 +29,21 @@ export async function POST(req: Request) {
     const userEmail = session?.user?.email || "dummy@local.dev";
     
     const genAI = new GoogleGenerativeAI(apiKey);
-    const { messages } = await req.json();
+    const { messages, newsContext } = await req.json();
     const latestMessage = messages[messages.length - 1]?.content;
+
+    // Compact NEWS FEED block from the client's Intelligence Feed. Used so
+    // the assistant can summarise a story and open its exact URL on request.
+    let newsFeedContext = "";
+    if (Array.isArray(newsContext) && newsContext.length > 0) {
+      newsFeedContext = `NEWS FEED — the user's Intelligence Feed (use to answer news/headline questions):\n${newsContext
+        .slice(0, 30)
+        .map(
+          (n: any, i: number) =>
+            `[${i + 1}] (${n.category}) ${n.title} — ${n.source}\n    URL: ${n.link}\n    ${(n.description || "").slice(0, 200)}`,
+        )
+        .join("\n")}`;
+    }
 
     // Resolve the active user ONCE, by email, and reuse it everywhere.
     //
@@ -209,6 +222,9 @@ export async function POST(req: Request) {
       - All relative times like "today", "tonight", "7 PM" must be calculated using the IST reference provided above.
       - When generating "startTime" or "endTime" for calendar actions, DO NOT use UTC. Use local IST time.
 
+      --- ABBREVIATIONS (interpret these naturally, expand when helpful) ---
+      F1 = Formula 1 · IPL = Indian Premier League · MF = Mutual Fund · SIP = Systematic Investment Plan · EMI = Equated Monthly Instalment · UPI = Unified Payments Interface · CC = Credit Card · FD = Fixed Deposit · NAV = Net Asset Value · APM = Associate Product Manager · PM = Product Manager or Prime Minister (use context) · DOB = Date of Birth · ETA = Estimated Time of Arrival · cal = calendar · msg = message · txn = transaction. Treat other common shorthand sensibly from context.
+
       --- TOPIC DISCIPLINE (CRITICAL — READ FIRST) ---
       - Vague follow-ups like "deep search", "dig deeper", "look harder", "search again", "tell me more", "be thorough" CONTINUE the topic of the user's prior turn. They do NOT permit you to pivot to a different data source.
       - Example: if the prior turn was about food expenses, "do a deep search" means search the expense data harder (scan RECENT TRANSACTIONS by merchant, check the INVENTORY block) — NOT scan email.
@@ -219,7 +235,7 @@ export async function POST(req: Request) {
       - CALENDAR: ${calendarContext}
       - TASKS: ${taskContext}
 ${gmailContextLine}      - EXPENSES: ${expenseContext}
-      - HISTORY: The recent interaction history (last 10 turns max — older turns are intentionally dropped to keep prompt size bounded). Use it for context.
+${newsFeedContext ? `      - ${newsFeedContext}\n` : ""}      - HISTORY: The recent interaction history (last 10 turns max — older turns are intentionally dropped to keep prompt size bounded). Use it for context.
       ${JSON.stringify(messages.slice(0, -1).slice(-10))}
       
       CAPABILITIES (Output JSON for actions):
@@ -234,7 +250,15 @@ ${gmailContextLine}      - EXPENSES: ${expenseContext}
       - Update/Delete Task: {"action": "update_task", "taskId": "ID", "status": "DONE"}, {"action": "delete_task", "taskId": "ID"}
       - Food Order: {"action": "create_food_order", "restaurant": "...", "items": "...", "cost": 0.0, "etaMinutes": 25}
       - Save Preference: {"action": "save_preference", "key": "...", "value": "..."}
-${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this turn) ---
+      - Open a news article: {"action": "open_article", "url": "https://..."}
+      * ONLY after the user confirms they want to read the full story. The url MUST be the exact URL from the NEWS FEED block for the item you summarised — never invent or guess a URL.
+${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
+      - The NEWS FEED block under CONTEXT lists the user's current news items with titles, sources, descriptions, and URLs.
+      - When the user asks about news, a headline, or a topic (tech, finance, F1/Formula 1, cricket/IPL, policy, etc.), find the most relevant item(s) and give a SHORT paragraph summary — 3 to 4 sentences, in your own words, grounded in the title and description. Don't fabricate details beyond what's given.
+      - After the summary, ALWAYS end by asking: "Want me to open the full article?"
+      - If the user then confirms (yes / open it / sure / go ahead), emit an open_article action with the EXACT URL from the NEWS FEED for the item you just summarised. If several items matched, summarise the single best one and note that more are available.
+      - This is the one news action: summarise as prose first, open only on confirmation.
+` : ``}${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this turn) ---
       The GMAIL block under CONTEXT has the latest unread snippets. Identify actionable tasks (deadlines, invoices, meeting requests). For each, ASK the user before adding as a task. Always include the Gmail Message ID as "sourceId" for dedup.
 ` : ``}
       --- EXPENSE INTELLIGENCE & ANALYSIS ---
@@ -256,7 +280,8 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
 
       --- ANALYTICAL MODE (CRITICAL) ---
       - If the user is asking for analysis / explanation / a summary / a pattern read, respond with prose ONLY. DO NOT emit any {"action": "..."} JSON in analytical responses — those blocks get executed as tool calls and would be wrong for an analysis turn.
-      - Only emit action JSON when the user is asking you to DO something (create/update/delete event or task, send/reply email, save preference, food order, Zomato).
+      - A NEWS SUMMARY is prose only (no action). Opening the article AFTER the user confirms is the one exception — emit open_article then.
+      - Only emit action JSON when the user is asking you to DO something (create/update/delete event or task, send/reply email, save preference, food order, Zomato, open a confirmed news article).
       --- TASK CATEGORIZATION ---
       - Use "Personal" for: Shopping (Amazon, etc.), Family, Home, Health, Hobbies.
       - Use "Work" for: Office, Proejcts, Clients, Meetings.
@@ -289,6 +314,9 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
     // created event is visible without the user having to navigate manually.
     let calendarMutatedDate: string | null = null;
     let tasksMutated = false;
+    // URL the client should open in a new tab (news article the user
+    // confirmed they want to read). Passed through, not executed server-side.
+    let openUrl: string | null = null;
 
     // Convert an ISO datetime (may or may not carry a UTC offset) to the IST
     // calendar date it falls on. We first normalise to UTC ms, then add the
@@ -559,6 +587,15 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
                 create: { userId: userObj.id, key: cmd.key, value: cmd.value }
               });
               executionMessages.push(`⚙️ Saved preference: **${cmd.key}** = "${cmd.value}"`);
+           } else if (cmd.action === "open_article") {
+              // Client-side action — we just pass the URL back for the
+              // browser to open. Validate it's a real http(s) link.
+              if (typeof cmd.url === "string" && /^https?:\/\//i.test(cmd.url)) {
+                openUrl = cmd.url;
+                executionMessages.push(`🔗 Opening the article…`);
+              } else {
+                executionMessages.push(`❌ Couldn't open that — no valid article URL.`);
+              }
            }
         } catch (e) { console.error("Action execution error", e); }
       }
@@ -571,7 +608,8 @@ ${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this 
       calendarMutated,
       calendarMutatedDate,
       tasksMutated,
-      foodMutated: text.includes("🍕") || text.includes("💡")
+      foodMutated: text.includes("🍕") || text.includes("💡"),
+      openUrl,
     });
 
   } catch (error: any) {
