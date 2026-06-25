@@ -177,7 +177,7 @@ export function NotesPanel() {
   };
 
   return (
-    <div className="glass-panel" style={{ height: "350px", display: "flex", flexDirection: "column" }}>
+    <div className="glass-panel" style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
         <h2 style={{ fontSize: "1.25rem", margin: 0, display: "flex", alignItems: "center", gap: "0.5rem" }}>
           🧠 Smart Brain
@@ -242,7 +242,7 @@ export function NotesPanel() {
       )}
 
       {/* Captured notes */}
-      <div style={{ flex: 1, overflowY: "auto", marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.6rem", paddingRight: "0.25rem" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.6rem", paddingRight: "0.25rem" }}>
         {notes.length === 0 ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-secondary)", fontSize: "0.8rem", fontStyle: "italic", textAlign: "center", padding: "1rem" }}>
             Your captured thoughts will appear here, cleaned and categorised.

@@ -163,7 +163,7 @@ export function TaskManager() {
   };
 
   return (
-    <div className="glass-panel" style={{ height: '100%', minHeight: '800px', display: 'flex', flexDirection: 'column' }}>
+    <div className="glass-panel" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.5rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           ✅ Priorities
@@ -291,7 +291,7 @@ export function TaskManager() {
         </form>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', overflowY: 'auto', flex: 1, paddingRight: '0.4rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: '0.4rem' }}>
         {categories.map(cat => {
           const categoryTasks = tasks.filter(t => t.category === cat.name);
           return (

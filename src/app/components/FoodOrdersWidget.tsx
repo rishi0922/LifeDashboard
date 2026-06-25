@@ -109,7 +109,7 @@ export function FoodOrdersWidget() {
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', paddingRight: '4px', position: 'relative' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: '1rem', overflowY: 'auto', paddingRight: '4px', position: 'relative' }}>
         {loading ? (
           <div className="animate-pulse" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Synchronizing with MCP...</div>
         ) : !isLinked && activeOrders.length === 0 && pastOrders.length === 0 ? (

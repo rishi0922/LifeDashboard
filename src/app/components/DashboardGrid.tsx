@@ -26,11 +26,17 @@ export function DashboardGrid() {
       </div>
 
       <style jsx>{`
+        /* Explicit row heights make the layout deterministic. The tall
+           Priorities column spans rows 1+2, so its height is fixed by
+           (row1 + gap + row2) and it scrolls internally — instead of
+           growing with content and inflating the rows, which used to
+           leave big gaps under the shorter Timeline / Smart Brain / Food
+           panels. */
         .bento-grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          grid-template-rows: auto auto auto;
-          grid-template-areas: 
+          grid-template-rows: 475px 350px auto;
+          grid-template-areas:
             "calendar calendar tasks"
             "notes food tasks"
             "news news news";
@@ -41,7 +47,8 @@ export function DashboardGrid() {
         .bento-item {
           display: flex;
           flex-direction: column;
-          min-height: 100%;
+          height: 100%;
+          min-height: 0; /* lets inner lists scroll instead of stretching */
         }
 
         .calendar-area { grid-area: calendar; }
@@ -53,7 +60,8 @@ export function DashboardGrid() {
         @media (max-width: 1200px) {
           .bento-grid {
             grid-template-columns: repeat(2, 1fr);
-            grid-template-areas: 
+            grid-template-rows: 475px 350px 350px auto;
+            grid-template-areas:
               "calendar calendar"
               "tasks notes"
               "tasks food"
@@ -64,7 +72,8 @@ export function DashboardGrid() {
         @media (max-width: 768px) {
           .bento-grid {
             grid-template-columns: 1fr;
-            grid-template-areas: 
+            grid-template-rows: 475px 520px 350px 320px auto;
+            grid-template-areas:
               "calendar"
               "tasks"
               "notes"

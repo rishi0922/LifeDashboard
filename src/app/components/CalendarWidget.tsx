@@ -192,7 +192,7 @@ export function CalendarWidget() {
   const isToday = new Date().toDateString() === selectedDate.toDateString();
 
   return (
-    <div className="glass-panel" style={{ height: '475px', display: 'flex', flexDirection: 'column' }}>
+    <div className="glass-panel" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '1.25rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           📅 Timeline
@@ -340,7 +340,7 @@ export function CalendarWidget() {
         </form>
       )}
 
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', paddingRight: '0.5rem', position: 'relative' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', paddingRight: '0.5rem', position: 'relative' }}>
         {status === "unauthenticated" ? (
           <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
             Please sign in to view and edit your calendar.
