@@ -174,8 +174,12 @@ export function AIChatAssistant() {
       }
 
       // The assistant asked to open a news article the user confirmed.
+      // In voice mode there's no user gesture, so a new-tab popup is
+      // blocked — fall back to navigating the current tab so the article
+      // reliably opens either way.
       if (data.openUrl) {
-        window.open(data.openUrl, "_blank", "noopener");
+        const win = window.open(data.openUrl, "_blank", "noopener");
+        if (!win) window.location.href = data.openUrl;
       }
 
       // Notify other components if a mutation took place. We send the IST

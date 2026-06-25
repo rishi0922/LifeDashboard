@@ -16,8 +16,8 @@ export async function createBargeInDetector(
   onSpeech: () => void,
   opts: { threshold?: number; framesNeeded?: number } = {},
 ): Promise<() => void> {
-  const threshold = opts.threshold ?? 0.12; // RMS; tuned to ignore residual echo
-  const framesNeeded = opts.framesNeeded ?? 4; // consecutive loud frames = real speech
+  const threshold = opts.threshold ?? 0.06; // RMS; low enough to catch normal speech onset
+  const framesNeeded = opts.framesNeeded ?? 3; // consecutive loud frames = real speech
 
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     return () => {};
@@ -26,7 +26,9 @@ export async function createBargeInDetector(
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      // echoCancellation removes the assistant's own playback from the mic;
+      // autoGainControl off so the level we measure isn't auto-normalised.
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
     });
   } catch {
     return () => {};
@@ -41,6 +43,12 @@ export async function createBargeInDetector(
   }
 
   const ctx = new Ctx();
+  // Chrome creates AudioContexts suspended until resumed under a user
+  // gesture; without this the analyser reads pure silence and barge-in
+  // never fires.
+  try {
+    if (ctx.state === "suspended") await ctx.resume();
+  } catch { /* best effort */ }
   const source = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
