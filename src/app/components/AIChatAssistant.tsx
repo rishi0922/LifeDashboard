@@ -236,28 +236,49 @@ export function AIChatAssistant() {
   // dedupe by link, cap at 30 to keep the prompt lean. Refreshed every
   // 5 min to match the news widget's cache window.
   useEffect(() => {
+    // Readable label per feed bucket so the assistant matches topics like
+    // "F1" / "Formula 1" to the right items.
+    const LABELS: Record<string, string> = {
+      forYou: "For You",
+      tech: "Tech",
+      finance: "Finance",
+      f1: "Formula 1",
+      cricket: "Cricket",
+      government: "Govt Policy",
+      general: "World",
+    };
     const loadNews = async () => {
       try {
         const res = await fetch("/api/news");
         if (!res.ok) return;
         const data = await res.json();
+        const buckets = Object.keys(LABELS).filter((k) => Array.isArray(data[k]));
         const seen = new Set<string>();
         const items: NewsItem[] = [];
-        for (const key of Object.keys(data)) {
-          if (!Array.isArray(data[key])) continue;
-          for (const it of data[key]) {
-            if (!it?.link || seen.has(it.link)) continue;
-            seen.add(it.link);
-            items.push({
-              title: it.title,
-              category: it.category || key,
-              source: it.source,
-              link: it.link,
-              description: (it.description || "").slice(0, 240),
-            });
-            if (items.length >= 30) break;
+        const CAP = 42;
+        // Round-robin across categories so every topic is represented —
+        // a sequential fill starved the later buckets (F1, cricket, …),
+        // which is why "F1 news" came back empty.
+        let idx = 0;
+        let added = true;
+        while (added && items.length < CAP) {
+          added = false;
+          for (const key of buckets) {
+            const it = data[key][idx];
+            if (it?.link && !seen.has(it.link)) {
+              seen.add(it.link);
+              items.push({
+                title: it.title,
+                category: LABELS[key],
+                source: it.source,
+                link: it.link,
+                description: (it.description || "").slice(0, 240),
+              });
+              added = true;
+              if (items.length >= CAP) break;
+            }
           }
-          if (items.length >= 30) break;
+          idx++;
         }
         newsRef.current = items;
       } catch { /* non-fatal — assistant just won't have news context */ }

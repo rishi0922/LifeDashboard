@@ -37,7 +37,7 @@ export async function POST(req: Request) {
     let newsFeedContext = "";
     if (Array.isArray(newsContext) && newsContext.length > 0) {
       newsFeedContext = `NEWS FEED — the user's Intelligence Feed (use to answer news/headline questions):\n${newsContext
-        .slice(0, 30)
+        .slice(0, 42)
         .map(
           (n: any, i: number) =>
             `[${i + 1}] (${n.category}) ${n.title} — ${n.source}\n    URL: ${n.link}\n    ${(n.description || "").slice(0, 200)}`,
