@@ -56,7 +56,9 @@ export function NotesPanel() {
   // instead — we don't, so the user can review and hit Capture).
   const stt = useSpeechRecognition({
     lang: "en-IN",
-    silenceMs: 3000,
+    // Longer grace than the assistant — dictating a thought has longer
+    // pauses than a quick command.
+    silenceMs: 6000,
     onResult: (text) => setDraft(text),
     onFinal: (text) => setDraft(text),
   });
