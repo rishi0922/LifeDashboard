@@ -74,16 +74,22 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     recognition.continuous = true;
 
     let finalText = "";
+    let started = false; // has the user actually begun speaking?
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
-    const armSilence = () => {
+    const armSilence = (ms: number) => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         try { recognition.stop(); } catch { /* already stopped */ }
-      }, silenceMs);
+      }, ms);
     };
 
-    recognition.onstart = () => armSilence();
+    // Generous window to START talking (don't cut off someone gathering a
+    // thought before the first word). Once speech begins, switch to the
+    // tight grace period between phrases.
+    const INITIAL_MS = Math.max(silenceMs, 12000);
+    recognition.onstart = () => armSilence(INITIAL_MS);
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      started = true;
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const chunk = event.results[i][0].transcript;
@@ -91,8 +97,11 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
         else interim += chunk;
       }
       onResultRef.current?.((finalText + interim).trim());
-      armSilence(); // any speech resets the grace window
+      armSilence(silenceMs); // any speech resets the grace window
     };
+    // If the API reports speech starting but we haven't gotten text yet,
+    // keep the session alive past the initial window.
+    recognition.onspeechstart = () => { if (!started) armSilence(INITIAL_MS); };
     recognition.onerror = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       setListening(false);

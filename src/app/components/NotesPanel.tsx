@@ -52,6 +52,9 @@ export function NotesPanel() {
 
   const stt = useSpeechRecognition({
     lang: "en-IN",
+    // Dictating a thought has longer pauses than a quick command, so give
+    // more between-phrase grace before the mic auto-stops.
+    silenceMs: 5000,
     onResult: (text) => setDraft(text),
   });
 
