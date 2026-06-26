@@ -35,6 +35,9 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
   const { lang = "en-IN", silenceMs = 3000, keepAlive = false, onResult, onFinal } = opts;
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
+  // Last SpeechRecognition error code (e.g. "not-allowed", "network",
+  // "no-speech"), surfaced so the UI can show why the mic isn't working.
+  const [error, setError] = useState<string | null>(null);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const accumRef = useRef(""); // transcript committed across restarts
@@ -99,6 +102,7 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      setError(event.error);
       if (
         event.error === "not-allowed" ||
         event.error === "service-not-allowed" ||
@@ -135,6 +139,7 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     accumRef.current = "";
     finalizingRef.current = false;
     fatalRef.current = false;
+    setError(null);
     startSession();
   }, [startSession]);
 
@@ -162,5 +167,5 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     };
   }, []);
 
-  return { supported, listening, start, stop, abort, toggle };
+  return { supported, listening, error, start, stop, abort, toggle };
 }

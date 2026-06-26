@@ -247,6 +247,15 @@ export function NotesPanel() {
         <div style={{ fontSize: "0.7rem", color: "#ef4444", marginTop: "0.4rem", fontWeight: 600 }}>{error}</div>
       )}
 
+      {/* Live mic status — surfaces whether recognition actually started
+          and any browser error (e.g. not-allowed, network, no-speech) so
+          voice issues are diagnosable instead of silent. */}
+      {(stt.listening || stt.error) && (
+        <div style={{ fontSize: "0.68rem", marginTop: "0.4rem", fontWeight: 600, color: stt.error ? "#ef4444" : "var(--accent-color)" }}>
+          {stt.error ? `🎙️ Mic error: ${stt.error}` : "🎙️ Listening…"}
+        </div>
+      )}
+
       {/* Captured notes */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.6rem", paddingRight: "0.25rem" }}>
         {notes.length === 0 ? (
