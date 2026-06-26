@@ -52,9 +52,9 @@ export function NotesPanel() {
 
   const stt = useSpeechRecognition({
     lang: "en-IN",
-    // Dictating a thought has longer pauses than a quick command, so give
-    // more between-phrase grace before the mic auto-stops.
-    silenceMs: 5000,
+    // Note dictation: keep the mic on through pauses and Chrome's internal
+    // auto-ends — it only stops when the user taps the mic off or Captures.
+    keepAlive: true,
     onResult: (text) => setDraft(text),
   });
 

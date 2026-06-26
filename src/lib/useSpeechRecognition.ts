@@ -3,41 +3,45 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Thin React wrapper over the browser Web Speech API (Chrome/Edge).
- * Centralises the STT setup so the chat assistant and the notes panel
- * don't each carry their own copy.
+ * React wrapper over the browser Web Speech API (Chrome/Edge).
  *
- * Usage:
- *   const stt = useSpeechRecognition({ lang: "en-IN", onFinal: text => ... });
- *   stt.supported // boolean
- *   stt.listening // boolean
- *   stt.toggle()  // start if idle, stop if listening
+ * The hard part this solves: Chrome's SpeechRecognition ends itself on its
+ * own — after a few seconds of silence or an internal time cap — even in
+ * `continuous` mode. Left alone, the mic "turns off automatically". So we
+ * auto-restart a fresh session on every unintended end and accumulate the
+ * transcript across restarts, giving a mic that stays on until the caller
+ * decides it's done.
  *
- * `onResult` fires with live (interim + final) text so the caller can
- * show a running transcript. `onFinal` fires once with the completed
- * utterance when recognition ends.
+ * Two stop policies:
+ *   - keepAlive=false (default, the assistant): finalize after `silenceMs`
+ *     of silence once the user has spoken — i.e. auto-submit a command.
+ *   - keepAlive=true (note dictation): never auto-stop; the mic stays on,
+ *     restarting through Chrome's auto-ends, until the caller calls stop().
+ *
+ * `onResult` streams the running transcript; `onFinal` fires once with the
+ * full text when the session is intentionally finalized.
  */
 export interface UseSpeechRecognitionOptions {
   lang?: string;
-  /**
-   * Grace period (ms) of silence before an utterance is treated as
-   * complete. The recogniser runs in continuous mode and the timer is
-   * reset on every speech result — so pausing to think doesn't cut the
-   * user off mid-sentence. Default 3000.
-   */
+  /** Silence (ms) before auto-finalizing. Ignored when keepAlive. Default 3000. */
   silenceMs?: number;
+  /** Keep the mic on until the caller stops it (no silence auto-stop). */
+  keepAlive?: boolean;
   onResult?: (text: string) => void;
   onFinal?: (text: string) => void;
 }
 
 export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
-  const { lang = "en-IN", silenceMs = 3000, onResult, onFinal } = opts;
+  const { lang = "en-IN", silenceMs = 3000, keepAlive = false, onResult, onFinal } = opts;
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
-  // Keep the latest callbacks in refs so the recognition handlers always
-  // call the current closures without re-creating the recogniser.
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const accumRef = useRef(""); // transcript committed across restarts
+  const finalizingRef = useRef(false); // intentional stop → don't restart
+  const fatalRef = useRef(false); // permission/hardware error → don't restart
+  const silenceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onResultRef = useRef(onResult);
   const onFinalRef = useRef(onFinal);
   useEffect(() => { onResultRef.current = onResult; }, [onResult]);
@@ -50,16 +54,21 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     );
   }, []);
 
-  const stop = useCallback(() => {
-    recognitionRef.current?.stop();
+  const clearSilence = () => {
+    if (silenceRef.current) {
+      clearTimeout(silenceRef.current);
+      silenceRef.current = null;
+    }
+  };
+
+  // Request the session to end and deliver onFinal (not a restart).
+  const finalize = useCallback(() => {
+    finalizingRef.current = true;
+    clearSilence();
+    try { recognitionRef.current?.stop(); } catch { /* already stopped */ }
   }, []);
 
-  const abort = useCallback(() => {
-    recognitionRef.current?.abort();
-    setListening(false);
-  }, []);
-
-  const start = useCallback(() => {
+  const startSession = useCallback(() => {
     const Ctor =
       (typeof window !== "undefined" &&
         (window.SpeechRecognition || window.webkitSpeechRecognition)) ||
@@ -69,59 +78,89 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     const recognition = new Ctor();
     recognition.lang = lang;
     recognition.interimResults = true;
-    // Continuous so the session survives natural pauses; we decide when
-    // the user is done via our own silence timer below.
     recognition.continuous = true;
 
-    let finalText = "";
-    let started = false; // has the user actually begun speaking?
-    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
-    const armSilence = (ms: number) => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        try { recognition.stop(); } catch { /* already stopped */ }
-      }, ms);
-    };
+    let sessionFinal = "";
 
-    // Generous window to START talking (don't cut off someone gathering a
-    // thought before the first word). Once speech begins, switch to the
-    // tight grace period between phrases.
-    const INITIAL_MS = Math.max(silenceMs, 12000);
-    recognition.onstart = () => armSilence(INITIAL_MS);
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      started = true;
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += chunk;
+        if (event.results[i].isFinal) sessionFinal += chunk;
         else interim += chunk;
       }
-      onResultRef.current?.((finalText + interim).trim());
-      armSilence(silenceMs); // any speech resets the grace window
+      onResultRef.current?.((accumRef.current + sessionFinal + interim).trim());
+      // Auto-finalize after silence only when not keep-alive. The timer
+      // lives at hook level so a pending grace survives an auto-restart.
+      if (!keepAlive) {
+        clearSilence();
+        silenceRef.current = setTimeout(() => finalize(), silenceMs);
+      }
     };
-    // If the API reports speech starting but we haven't gotten text yet,
-    // keep the session alive past the initial window.
-    recognition.onspeechstart = () => { if (!started) armSilence(INITIAL_MS); };
-    recognition.onerror = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      setListening(false);
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (
+        event.error === "not-allowed" ||
+        event.error === "service-not-allowed" ||
+        event.error === "audio-capture"
+      ) {
+        fatalRef.current = true; // can't recover by restarting
+      }
     };
+
     recognition.onend = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
+      if (sessionFinal) accumRef.current = `${accumRef.current}${sessionFinal} `;
+      // Chrome ended on its own and we still want to listen → restart with
+      // a fresh session, preserving the accumulated transcript.
+      if (!finalizingRef.current && !fatalRef.current) {
+        setTimeout(() => startSession(), 100);
+        return;
+      }
+      // Intentional finish (user stop, grace timeout, or fatal error).
+      clearSilence();
       setListening(false);
-      const text = finalText.trim();
+      const text = accumRef.current.trim();
+      accumRef.current = "";
+      finalizingRef.current = false;
+      fatalRef.current = false;
       if (text) onFinalRef.current?.(text);
     };
 
     recognitionRef.current = recognition;
     setListening(true);
-    recognition.start();
-  }, [lang, silenceMs]);
+    try { recognition.start(); } catch { /* start race — onend will retry */ }
+  }, [lang, silenceMs, keepAlive, finalize]);
+
+  const start = useCallback(() => {
+    accumRef.current = "";
+    finalizingRef.current = false;
+    fatalRef.current = false;
+    startSession();
+  }, [startSession]);
+
+  const stop = useCallback(() => finalize(), [finalize]);
+
+  const abort = useCallback(() => {
+    finalizingRef.current = true; // suppress restart
+    clearSilence();
+    try { recognitionRef.current?.abort(); } catch { /* noop */ }
+    accumRef.current = "";
+    setListening(false);
+  }, []);
 
   const toggle = useCallback(() => {
     if (listening) stop();
     else start();
   }, [listening, start, stop]);
+
+  // Stop the mic if the component using it unmounts.
+  useEffect(() => {
+    return () => {
+      finalizingRef.current = true;
+      clearSilence();
+      try { recognitionRef.current?.abort(); } catch { /* noop */ }
+    };
+  }, []);
 
   return { supported, listening, start, stop, abort, toggle };
 }
