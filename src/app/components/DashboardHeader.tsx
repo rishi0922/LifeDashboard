@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { IPLScoreWidget } from "./IPLScoreWidget";
+import { FifaScoreWidget } from "./FifaScoreWidget";
 
 export function DashboardHeader() {
   const [time, setTime] = useState<string>("");
@@ -98,7 +98,7 @@ export function DashboardHeader() {
       {/* Right side: IPL pill + Weather */}
       <div className="header-right">
         {/* ── IPL Score Pill ── */}
-        <IPLScoreWidget />
+        <FifaScoreWidget />
 
         {/* Weather Hub */}
         {weatherData ? (
