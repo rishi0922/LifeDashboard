@@ -50,12 +50,15 @@ export function NotesPanel() {
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set());
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
+  // Same config as the floating assistant's voice input (which works
+  // reliably): stream the live transcript into the box via onResult, and
+  // on finalize keep the full text in the box (the assistant submits here
+  // instead — we don't, so the user can review and hit Capture).
   const stt = useSpeechRecognition({
     lang: "en-IN",
-    // Note dictation: keep the mic on through pauses and Chrome's internal
-    // auto-ends — it only stops when the user taps the mic off or Captures.
-    keepAlive: true,
+    silenceMs: 3000,
     onResult: (text) => setDraft(text),
+    onFinal: (text) => setDraft(text),
   });
 
   const fetchNotes = async () => {
