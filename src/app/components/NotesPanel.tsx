@@ -50,17 +50,9 @@ export function NotesPanel() {
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set());
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  // Same config as the floating assistant's voice input (which works
-  // reliably): stream the live transcript into the box via onResult, and
-  // on finalize keep the full text in the box (the assistant submits here
-  // instead — we don't, so the user can review and hit Capture).
   const stt = useSpeechRecognition({
     lang: "en-IN",
-    // Longer grace than the assistant — dictating a thought has longer
-    // pauses than a quick command.
-    silenceMs: 6000,
     onResult: (text) => setDraft(text),
-    onFinal: (text) => setDraft(text),
   });
 
   const fetchNotes = async () => {
@@ -247,15 +239,6 @@ export function NotesPanel() {
 
       {error && (
         <div style={{ fontSize: "0.7rem", color: "#ef4444", marginTop: "0.4rem", fontWeight: 600 }}>{error}</div>
-      )}
-
-      {/* Live mic status — surfaces whether recognition actually started
-          and any browser error (e.g. not-allowed, network, no-speech) so
-          voice issues are diagnosable instead of silent. */}
-      {(stt.listening || stt.error) && (
-        <div style={{ fontSize: "0.68rem", marginTop: "0.4rem", fontWeight: 600, color: stt.error ? "#ef4444" : "var(--accent-color)" }}>
-          {stt.error ? `🎙️ Mic error: ${stt.error}` : `🎙️ Listening… (heard ${stt.resultCount})`}
-        </div>
       )}
 
       {/* Captured notes */}

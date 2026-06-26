@@ -3,23 +3,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Simple, robust wrapper over the browser Web Speech API (Chrome/Edge).
+ * Thin React wrapper over the browser Web Speech API (Chrome/Edge).
+ * Centralises the STT setup so the chat assistant and the notes panel
+ * don't each carry their own copy.
  *
- * Deliberately minimal: one recognition session per start(), continuous so
- * it survives natural pauses, and a silence timer that finalizes after the
- * user stops talking. Earlier versions auto-restarted sessions and added a
- * cross-instance mic lock — that kept a recogniser looping in the
- * background and starved the other mic (Smart Brain went red but silent,
- * then errored). Keeping it simple means each mic only holds the
- * microphone while actually in use, so the assistant and Smart Brain never
- * fight over it.
+ * Usage:
+ *   const stt = useSpeechRecognition({ lang: "en-IN", onFinal: text => ... });
+ *   stt.supported // boolean
+ *   stt.listening // boolean
+ *   stt.toggle()  // start if idle, stop if listening
  *
- * `onResult` streams the running transcript; `onFinal` fires once with the
- * full text when the session ends.
+ * `onResult` fires with live (interim + final) text so the caller can
+ * show a running transcript. `onFinal` fires once with the completed
+ * utterance when recognition ends.
  */
 export interface UseSpeechRecognitionOptions {
   lang?: string;
-  /** Silence (ms) before finalizing once the user has started talking. Default 3000. */
+  /**
+   * Grace period (ms) of silence before an utterance is treated as
+   * complete. The recogniser runs in continuous mode and the timer is
+   * reset on every speech result — so pausing to think doesn't cut the
+   * user off mid-sentence. Default 3000.
+   */
   silenceMs?: number;
   onResult?: (text: string) => void;
   onFinal?: (text: string) => void;
@@ -29,11 +34,10 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
   const { lang = "en-IN", silenceMs = 3000, onResult, onFinal } = opts;
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [resultCount, setResultCount] = useState(0);
-
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const silenceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep the latest callbacks in refs so the recognition handlers always
+  // call the current closures without re-creating the recogniser.
   const onResultRef = useRef(onResult);
   const onFinalRef = useRef(onFinal);
   useEffect(() => { onResultRef.current = onResult; }, [onResult]);
@@ -46,12 +50,14 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     );
   }, []);
 
-  const clearSilence = () => {
-    if (silenceRef.current) {
-      clearTimeout(silenceRef.current);
-      silenceRef.current = null;
-    }
-  };
+  const stop = useCallback(() => {
+    recognitionRef.current?.stop();
+  }, []);
+
+  const abort = useCallback(() => {
+    recognitionRef.current?.abort();
+    setListening(false);
+  }, []);
 
   const start = useCallback(() => {
     const Ctor =
@@ -60,28 +66,24 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
       null;
     if (!Ctor) return;
 
-    // Drop any previous session before starting a fresh one.
-    try { recognitionRef.current?.abort(); } catch { /* noop */ }
-    clearSilence();
-
     const recognition = new Ctor();
     recognition.lang = lang;
     recognition.interimResults = true;
+    // Continuous so the session survives natural pauses; we decide when
+    // the user is done via our own silence timer below.
     recognition.continuous = true;
 
     let finalText = "";
-    setError(null);
-    setResultCount(0);
-
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
     const armSilence = () => {
-      clearSilence();
-      silenceRef.current = setTimeout(() => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
         try { recognition.stop(); } catch { /* already stopped */ }
       }, silenceMs);
     };
 
+    recognition.onstart = () => armSilence();
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      setResultCount((c) => c + 1);
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const chunk = event.results[i][0].transcript;
@@ -89,15 +91,14 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
         else interim += chunk;
       }
       onResultRef.current?.((finalText + interim).trim());
-      armSilence(); // start/extend the grace window once speech is flowing
+      armSilence(); // any speech resets the grace window
     };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      setError(event.error);
+    recognition.onerror = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      setListening(false);
     };
-
     recognition.onend = () => {
-      clearSilence();
+      if (silenceTimer) clearTimeout(silenceTimer);
       setListening(false);
       const text = finalText.trim();
       if (text) onFinalRef.current?.(text);
@@ -105,32 +106,13 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
 
     recognitionRef.current = recognition;
     setListening(true);
-    try { recognition.start(); } catch { setListening(false); }
+    recognition.start();
   }, [lang, silenceMs]);
-
-  const stop = useCallback(() => {
-    clearSilence();
-    try { recognitionRef.current?.stop(); } catch { /* noop */ }
-  }, []);
-
-  const abort = useCallback(() => {
-    clearSilence();
-    try { recognitionRef.current?.abort(); } catch { /* noop */ }
-    setListening(false);
-  }, []);
 
   const toggle = useCallback(() => {
     if (listening) stop();
     else start();
   }, [listening, start, stop]);
 
-  // Release the mic if the component unmounts.
-  useEffect(() => {
-    return () => {
-      clearSilence();
-      try { recognitionRef.current?.abort(); } catch { /* noop */ }
-    };
-  }, []);
-
-  return { supported, listening, error, resultCount, start, stop, abort, toggle };
+  return { supported, listening, start, stop, abort, toggle };
 }
