@@ -21,6 +21,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * `onResult` streams the running transcript; `onFinal` fires once with the
  * full text when the session is intentionally finalized.
  */
+// Only one SpeechRecognition may own the microphone at a time. Both the
+// always-mounted assistant and the Smart Brain panel create their own
+// instance; without this lock, starting one while the other still holds
+// the mic leaves the new one "started but silent" (red, no results).
+// Starting any session aborts the previously active one.
+let activeRecognition: SpeechRecognition | null = null;
+
 export interface UseSpeechRecognitionOptions {
   lang?: string;
   /** Silence (ms) before auto-finalizing. Ignored when keepAlive. Default 3000. */
@@ -38,6 +45,9 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
   // Last SpeechRecognition error code (e.g. "not-allowed", "network",
   // "no-speech"), surfaced so the UI can show why the mic isn't working.
   const [error, setError] = useState<string | null>(null);
+  // How many result events this session has received — lets the UI prove
+  // whether audio is actually reaching the recogniser.
+  const [resultCount, setResultCount] = useState(0);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const accumRef = useRef(""); // transcript committed across restarts
@@ -78,14 +88,22 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
       null;
     if (!Ctor) return;
 
+    // Take the mic from any other active recogniser (e.g. the assistant's)
+    // before starting ours, so we don't end up "started but silent".
+    if (activeRecognition) {
+      try { activeRecognition.abort(); } catch { /* noop */ }
+    }
+
     const recognition = new Ctor();
     recognition.lang = lang;
     recognition.interimResults = true;
     recognition.continuous = true;
+    activeRecognition = recognition;
 
     let sessionFinal = "";
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      setResultCount((c) => c + 1);
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const chunk = event.results[i][0].transcript;
@@ -121,6 +139,7 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
         return;
       }
       // Intentional finish (user stop, grace timeout, or fatal error).
+      if (activeRecognition === recognition) activeRecognition = null;
       clearSilence();
       setListening(false);
       const text = accumRef.current.trim();
@@ -140,6 +159,7 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     finalizingRef.current = false;
     fatalRef.current = false;
     setError(null);
+    setResultCount(0);
     startSession();
   }, [startSession]);
 
@@ -167,5 +187,5 @@ export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
     };
   }, []);
 
-  return { supported, listening, error, start, stop, abort, toggle };
+  return { supported, listening, error, resultCount, start, stop, abort, toggle };
 }

@@ -252,7 +252,7 @@ export function NotesPanel() {
           voice issues are diagnosable instead of silent. */}
       {(stt.listening || stt.error) && (
         <div style={{ fontSize: "0.68rem", marginTop: "0.4rem", fontWeight: 600, color: stt.error ? "#ef4444" : "var(--accent-color)" }}>
-          {stt.error ? `🎙️ Mic error: ${stt.error}` : "🎙️ Listening…"}
+          {stt.error ? `🎙️ Mic error: ${stt.error}` : `🎙️ Listening… (heard ${stt.resultCount})`}
         </div>
       )}
 
