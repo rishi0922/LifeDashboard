@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { fetchGmailSnippets, sendGmailReply, sendGmailNew } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
 import { buildSpendIntelligenceBlock } from "@/lib/spendAnalytics";
+import { calendarEventId } from "@/lib/dedup";
 
 export const dynamic = "force-dynamic";
 // Gmail reply + Gemini + calendar context + Gmail list-snippets can total
@@ -240,8 +241,9 @@ ${newsFeedContext ? `      - ${newsFeedContext}\n` : ""}      - HISTORY: The rec
       
       CAPABILITIES (Output JSON for actions):
       - Create Event: {"action": "create_event", "summary": "Title", "startTime": "YYYY-MM-DDTHH:mm:ss", "endTime": "YYYY-MM-DDTHH:mm:ss"}
+      * Emit create_event ONLY for a brand-new request in the user's CURRENT message. NEVER re-create an event/reminder that already appears in the CALENDAR context above, and never re-emit a create from earlier in the conversation history — it's already done. Each reminder is created exactly once.
       - Update/Delete Event: {"action": "update_event", "eventId": "ID"}, {"action": "delete_event", "eventId": "ID"}
-      * IMPORTANT: eventId MUST come verbatim from the [ID: ...] prefix in the CALENDAR context above. Never invent IDs, never use summaries as IDs. If the user asks to clear / remove / delete multiple events (e.g. "before 8am"), emit ONE delete_event JSON block per matching event.
+      * IMPORTANT: eventId MUST come verbatim from the [ID: ...] prefix in the CALENDAR context above. Never invent IDs, never use summaries as IDs. To change or remove a reminder, find it in the CALENDAR context and use its [ID: ...]. If the user asks to clear / remove / delete multiple events (e.g. "before 8am"), emit ONE delete_event JSON block per matching event.
       - Reply to email: {"action": "reply_email", "emailId": "GMAIL_MSG_ID", "body": "Your reply text"}
       * IMPORTANT: emailId MUST be a real Gmail message id pulled from the "RECENT UNREAD EMAILS" block below (or an id you extracted from a previous fetch this session). Write a polite, concise reply body in first person as the user. Keep it under 120 words unless the user asks for more. Never invent emailIds.
       - Send a NEW email (no existing thread): {"action": "send_email", "to": "person@example.com", "subject": "Subject line", "body": "Your message", "cc": "optional@x.com", "bcc": "optional@y.com"}
@@ -489,10 +491,19 @@ ${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
                  }
                }
 
+               // Deterministic event ID derived from the idempotency key
+               // (user + normalised title + 15-min bucketed start). Google
+               // rejects a duplicate ID with HTTP 409, so re-creating the
+               // same reminder is impossible — no race, no reliance on the
+               // extended-property query. This is the same guarantee the
+               // Gmail→Calendar sync already uses.
+               const deterministicId = calendarEventId(idemKey);
+
                const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
                  method: "POST",
                  headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
                  body: JSON.stringify({
+                   id: deterministicId,
                    summary: cmd.summary,
                    start: { dateTime: startDT, timeZone: "Asia/Kolkata" },
                    end: { dateTime: endDT, timeZone: "Asia/Kolkata" },
@@ -509,6 +520,9 @@ ${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
                  calendarMutated = true;
                  calendarMutatedDate =
                    istDateStrFromISO(startDT) ?? calendarMutatedDate;
+               } else if (res.status === 409) {
+                 // Same reminder already exists (same id) — idempotent skip.
+                 executionMessages.push(`⚠️ Calendar: "${cmd.summary}" already exists — skipping duplicate.`);
                } else {
                  const errJson = await res.json().catch(() => ({}));
                  console.error("Google Calendar API Error:", res.status, errJson);

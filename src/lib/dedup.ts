@@ -205,12 +205,12 @@ export async function findDuplicateExpense(params: {
  *
  * Ref: https://developers.google.com/calendar/api/v3/reference/events/insert
  */
-export function calendarEventIdFromEmail(emailId: string): string {
+export function calendarEventId(seed: string): string {
   // Simple stable hash (djb2) then base32 in Google's allowed alphabet.
   let h1 = 5381;
   let h2 = 52711;
-  for (let i = 0; i < emailId.length; i++) {
-    const c = emailId.charCodeAt(i);
+  for (let i = 0; i < seed.length; i++) {
+    const c = seed.charCodeAt(i);
     h1 = (h1 * 33) ^ c;
     h2 = (h2 * 33) ^ c;
   }
@@ -227,4 +227,9 @@ export function calendarEventIdFromEmail(emailId: string): string {
   const part1 = toBase32(h1);
   const part2 = toBase32(h2);
   return "cci" + part1 + part2;
+}
+
+/** Deterministic Calendar event ID for a Gmail-sourced event. */
+export function calendarEventIdFromEmail(emailId: string): string {
+  return calendarEventId(emailId);
 }
