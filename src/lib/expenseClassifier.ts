@@ -29,6 +29,7 @@ export type ExpenseCategory =
   | "Investment"
   | "Health"
   | "Transfer"
+  | "Bank Transfer"
   | "Other";
 
 export interface ClassifierResult {
@@ -163,6 +164,8 @@ const KEYWORD_RULES: Array<{ patterns: string[]; category: ExpenseCategory; subc
   { patterns: ["medicine", "pharmacy"], category: "Health", subcategory: "pharmacy" },
   { patterns: ["fuel", "petrol", "diesel"], category: "Travel", subcategory: "fuel" },
   { patterns: ["metro card", "metro recharge"], category: "Travel", subcategory: "public_transport" },
+  // Bank-to-bank transfers (as opposed to UPI person-to-person "Transfer").
+  { patterns: ["neft", "imps", "rtgs", "net banking", "netbanking", "bank transfer", "fund transfer", "account transfer", "a/c transfer"], category: "Bank Transfer", subcategory: "bank_transfer" },
 ];
 
 /** Credit / refund markers — if present, the message is NOT an expense. */

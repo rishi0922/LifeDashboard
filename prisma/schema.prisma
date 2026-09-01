@@ -85,7 +85,7 @@ model Expense {
   id          String   @id @default(cuid())
   amount      Float
   merchant    String
-  category    String   // Food, Travel, Bills, Shopping, Entertainment, Investment, Health, Groceries, Subscription, Transfer, Other
+  category    String   // Food, Travel, Bills, Shopping, Entertainment, Investment, Health, Groceries, Subscription, Transfer, Bank Transfer, Other
   subcategory String?  // dining_out, ride_hailing, ott_subscription, utility_bill, upi_transfer, etc.
   description String?  // Original email snippet / manual note
   paymentMode String?  // UPI, CARD, NETBANKING, CASH, WALLET

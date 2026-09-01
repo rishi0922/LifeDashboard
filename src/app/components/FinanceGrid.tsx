@@ -265,6 +265,7 @@ export function FinanceGrid() {
     'Health': '#ec4899',
     'Bills': '#22c55e',
     'Transfer': '#f97316',
+    'Bank Transfer': '#0891b2',
     'Other': '#64748b'
   };
 
@@ -279,6 +280,7 @@ export function FinanceGrid() {
     'Health': '⚕️',
     'Bills': '🧾',
     'Transfer': '💸',
+    'Bank Transfer': '🏦',
     'Other': '📑'
   };
   const categoryColor = (c: string) => CATEGORY_COLORS[c] || '#64748b';

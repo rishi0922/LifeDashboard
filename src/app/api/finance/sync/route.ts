@@ -35,6 +35,7 @@ const ALLOWED_CATEGORIES: ExpenseCategory[] = [
   "Investment",
   "Health",
   "Transfer",
+  "Bank Transfer",
   "Other",
 ];
 
@@ -293,7 +294,8 @@ STRICT RULES:
 - Pick the most specific category (e.g. "Subscription" for Netflix, not "Entertainment"; "Groceries" for Blinkit, not "Food").
 - Merchant should be the specific app/shop/biller ("Swiggy", "Uber", "Airtel"). Never return the bank as the merchant.
 - MERCHANT EXTRACTION: bank/UPI alerts usually name the counterparty ("paid to X", "VPA x@okaxis", "towards X"). Extract that name. Only when the email truly contains NO counterparty use "UPI Payment" — never output the bare words "UPI" or "Unknown".
-- PERSON PAYMENTS: when the counterparty is a person's name (e.g. "RAHUL SHARMA", "NarayanaReddy K") rather than a business, category MUST be "Transfer". A person is never a "Subscription", "Bills" or "Shopping".
+- PERSON PAYMENTS: when the counterparty is a person's name (e.g. "RAHUL SHARMA", "NarayanaReddy K") rather than a business, category MUST be "Transfer" for UPI, or "Bank Transfer" if the email mentions NEFT / IMPS / RTGS / net-banking / account transfer. A person is never a "Subscription", "Bills" or "Shopping".
+- BANK TRANSFER vs TRANSFER: use "Bank Transfer" for NEFT / IMPS / RTGS / net-banking / account-to-account transfers; use "Transfer" for UPI payments.
 - SUBSCRIPTION DISCIPLINE: "Subscription" is ONLY for recognisable recurring services (Netflix, Spotify, Google One, SaaS tools, Rentomojo, gyms). A generic UPI debit is NOT a subscription regardless of amount. Counterparty unclear → "Other"; counterparty is a person → "Transfer".
 - date must be YYYY-MM-DD (fall back to the email Date header if no explicit date is in the body).
 
@@ -330,17 +332,27 @@ ${needsAi
           // production data (person transfers tagged "Subscription",
           // merchant returned as the literal string "UPI"/"Unknown").
           if (looksLikePersonName(merchant)) {
-            // A person is a transfer, full stop.
-            cat = "Transfer";
+            // A person is a transfer — bank-rail if net-banking, else UPI.
+            cat = entry.paymentMode === "NETBANKING" ? "Bank Transfer" : "Transfer";
           }
           if (isAnonymousMerchant(merchant)) {
-            merchant = "UPI Payment";
+            merchant = entry.paymentMode === "NETBANKING" ? "Bank Transfer" : "UPI Payment";
             // With no counterparty identity we can't claim Subscription /
-            // Bills / Shopping. UPI payment mode reads as Transfer,
-            // anything else as Other.
+            // Bills / Shopping. Route by payment rail: net-banking →
+            // Bank Transfer, UPI → Transfer, anything else → Other.
             if (cat === "Subscription" || cat === "Bills" || cat === "Shopping") {
-              cat = entry.paymentMode === "UPI" ? "Transfer" : "Other";
+              cat =
+                entry.paymentMode === "NETBANKING"
+                  ? "Bank Transfer"
+                  : entry.paymentMode === "UPI"
+                    ? "Transfer"
+                    : "Other";
             }
+          }
+          // Net-banking transfers the AI left as generic "Transfer" belong
+          // in the dedicated Bank Transfer bucket.
+          if (cat === "Transfer" && entry.paymentMode === "NETBANKING") {
+            cat = "Bank Transfer";
           }
 
           // Prefer rule/keyword category when it exists — AI only fills merchant/subcategory.
