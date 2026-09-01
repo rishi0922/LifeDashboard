@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
-import { createBargeInDetector } from "@/lib/voiceActivity";
 
 type NewsItem = { title: string; category: string; source: string; link: string; description: string };
 
@@ -82,19 +81,12 @@ export function AIChatAssistant() {
         audio.onerror = () => { setIsSpeaking(false); stopBarge(); browserSpeak(); };
         await audio.play();
 
-        // Barge-in: while the reply plays, listen for the user starting to
-        // talk. If they do, stop the audio and start transcribing them.
-        createBargeInDetector(() => {
-          audio.pause();
-          setIsSpeaking(false);
-          bargeStopRef.current = null;
-          if (!stt.listening) stt.start();
-        }).then((stop) => {
-          // If the clip already finished while we were setting up, don't
-          // leave a detector running.
-          if (audio.paused || audio.ended) stop();
-          else bargeStopRef.current = stop;
-        });
+        // NOTE: automatic "talk over it to interrupt" (barge-in) is
+        // intentionally disabled. Running a mic detector during playback
+        // tripped on the reply's own audio/echo and paused it instantly —
+        // which read as "no talk back". Reliable playback wins; the user
+        // can interrupt by tapping the mic. Proper barge-in needs verified
+        // echo-cancellation tuning before it's re-enabled.
       } else {
         browserSpeak();
       }
