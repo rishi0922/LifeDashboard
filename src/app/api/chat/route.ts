@@ -234,6 +234,7 @@ export async function POST(req: Request) {
       F1 = Formula 1 · IPL = Indian Premier League · MF = Mutual Fund · SIP = Systematic Investment Plan · EMI = Equated Monthly Instalment · UPI = Unified Payments Interface · CC = Credit Card · FD = Fixed Deposit · NAV = Net Asset Value · APM = Associate Product Manager · PM = Product Manager or Prime Minister (use context) · DOB = Date of Birth · ETA = Estimated Time of Arrival · cal = calendar · msg = message · txn = transaction. Treat other common shorthand sensibly from context.
 
       --- TOPIC DISCIPLINE (CRITICAL — READ FIRST) ---
+      - FOLLOW-UP FIRST: If your OWN previous message (see HISTORY) asked the user a question, a short reply — "yes", "yes please", "no", "sure", "ok", "go ahead", "the first one" — is the ANSWER to that question. Act on it in that exact context. Do NOT reinterpret it as a new request, and NEVER pivot to an unrelated topic or a proactive suggestion (e.g. food). Example: you asked "Want me to open the full article?" and the user says "yes please" → open that article, nothing else.
       - Vague follow-ups like "deep search", "dig deeper", "look harder", "search again", "tell me more", "be thorough" CONTINUE the topic of the user's prior turn. They do NOT permit you to pivot to a different data source.
       - Example: if the prior turn was about food expenses, "do a deep search" means search the expense data harder (scan RECENT TRANSACTIONS by merchant, check the INVENTORY block) — NOT scan email.
       - You may ONLY consider email if the user's CURRENT message explicitly contains email / inbox / mail / gmail / reply / scan. Past mentions in HISTORY do NOT permit a fresh email scan or fresh email mention.
@@ -301,12 +302,12 @@ ${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
 
       --- ZOMATO INTELLIGENCE (HYPER-LOCAL) ---
       - STATUS: You are connected to a Zomato MCP Bridge.
-      - CAPABILITIES: 
+      - CAPABILITIES:
         1. {"action": "zomato_search", "preference": "Fastest" | "Best Value", "cuisine": "..."} -> Finds top matches using historical boosting.
         2. {"action": "zomato_prepare_cart", "restaurant": "...", "items": [...]} -> Drafts a cart (Human-in-the-loop).
         3. {"action": "zomato_track", "orderId": "..."} -> Force-syncs a specific order.
-      - PROACTIVITY: If the current time is between 10:00 PM and 02:00 AM, and the user is active, politely check if they want a late-night snack suggested from their Favorite Restaurants.
-      
+      - Only use these when the user EXPLICITLY asks about food, restaurants, or ordering. NEVER proactively suggest food, and never treat a reply to a non-food question (like confirming an article) as a food request.
+
       User: ${latestMessage}
     `;
 
