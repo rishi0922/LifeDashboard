@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchGmailSnippets, sendGmailReply, sendGmailNew } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
-import { buildSpendIntelligenceBlock } from "@/lib/spendAnalytics";
+import { buildSpendIntelligenceBlock, buildMonthlyBreakdownBlock } from "@/lib/spendAnalytics";
 import { calendarEventId } from "@/lib/dedup";
 
 export const dynamic = "force-dynamic";
@@ -148,21 +148,28 @@ export async function POST(req: Request) {
 
     let expenseContext = "No expenses recorded.";
     try {
-      // 60-day window so the trailing 4-week baseline + last-month
-      // comparison both have enough data. 500-row cap is a safety net;
-      // real users rarely hit it inside 60 days.
+      // 12-month window so the assistant can answer month-specific
+      // questions ("categorise June") — not just the recent weeks. The
+      // recent-weeks SPEND INTELLIGENCE + last-21-days blocks below
+      // date-filter internally, so the wider fetch doesn't change their
+      // output; it only feeds the new MONTHLY BREAKDOWN. 2000-row cap is
+      // a safety net.
       const sinceDate = new Date();
-      sinceDate.setDate(sinceDate.getDate() - 60);
+      sinceDate.setDate(sinceDate.getDate() - 365);
       const expenses = await prisma.expense.findMany({
         where: { userId: activeUser.id, date: { gte: sinceDate } },
         orderBy: { date: "desc" },
-        take: 500,
+        take: 2000,
       });
       if (expenses.length > 0) {
         // Pre-computed insights block — totals, baselines, anomalies,
         // MoM, daily pattern, on-pace projection. Gemini reads this
         // first; the raw rows below are only for drill-down.
         const spendBlock = buildSpendIntelligenceBlock(expenses);
+
+        // Per-month category breakdown with % weightage (last 6 months)
+        // so month-specific questions are answerable.
+        const monthlyBlock = buildMonthlyBreakdownBlock(expenses, 6);
 
         // Raw rows for the last 21 days — guarantees full this-week +
         // last-week coverage even at high txn density, plus a buffer
@@ -178,7 +185,7 @@ export async function POST(req: Request) {
             return `- ${formattedDate} | Merchant: ${e.merchant} | Category: ${e.category} | Amount: ₹${e.amount}`;
           }).join('\n');
 
-        expenseContext = `${spendBlock}\n\nRECENT TRANSACTIONS (every txn in the last 21 days — use this for any window not pre-summarized above):\n${recentRows}`;
+        expenseContext = `${spendBlock}\n\n${monthlyBlock}\n\nRECENT TRANSACTIONS (every txn in the last 21 days — use this for any window not pre-summarized above):\n${recentRows}`;
       }
     } catch (err) { console.error("Expense context error", err); }
 
@@ -264,8 +271,10 @@ ${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
       The GMAIL block under CONTEXT has the latest unread snippets. Identify actionable tasks (deadlines, invoices, meeting requests). For each, ASK the user before adding as a task. Always include the Gmail Message ID as "sourceId" for dedup.
 ` : ``}
       --- EXPENSE INTELLIGENCE & ANALYSIS ---
-      - The EXPENSES context has THREE sections in order: (1) SPEND INTELLIGENCE block with THIS WEEK + LAST WEEK breakdowns by category and merchant, baselines, anomalies, daily pattern, MTD pace; (2) an INVENTORY block listing every category and every merchant seen in the last 21 days with how each merchant was tagged; (3) a RECENT TRANSACTIONS list covering every transaction in the last 21 days.
-      - For THIS WEEK / LAST WEEK pattern questions: read from the corresponding section of the SPEND INTELLIGENCE block. Those numbers are authoritative — do not re-derive them.
+      - The EXPENSES context has FOUR sections: (1) SPEND INTELLIGENCE — THIS WEEK + LAST WEEK breakdowns by category and merchant, baselines, anomalies, daily pattern, MTD pace; (2) MONTHLY BREAKDOWN — the last 6 months, each with total and per-category % weightage; (3) an INVENTORY block of every category/merchant seen in the last 21 days; (4) a RECENT TRANSACTIONS list for the last 21 days.
+      - You DO have several months of history. For a MONTH-SPECIFIC question ("categorise June", "% weightage for last month", "how much on Travel in July"), READ FROM THE MONTHLY BREAKDOWN block — it already has each month's category totals and percentages. NEVER say you only have the last 21 days when the MONTHLY BREAKDOWN lists that month.
+      - Only if a requested month is genuinely absent from the MONTHLY BREAKDOWN (older than 6 months, or "no spend recorded") should you say that specific month isn't available — and say exactly which months you DO have.
+      - For THIS WEEK / LAST WEEK pattern questions: read from the SPEND INTELLIGENCE block. Those numbers are authoritative — do not re-derive them.
       - For "yesterday" / "last Tuesday" / "last 3 days" / specific-day windows: filter RECENT TRANSACTIONS by date yourself.
 
       MANDATORY DRILL-DOWN BEFORE CLAIMING "NO DATA":

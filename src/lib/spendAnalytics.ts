@@ -665,3 +665,60 @@ export function buildSpendIntelligenceBlock(
 
   return lines.join("\n");
 }
+
+/**
+ * Per-month category breakdown with percentage weightage, covering the
+ * last `monthsBack` months. Lets the assistant answer month-specific
+ * questions ("categorise June, give the % weightage") that the
+ * recent-weeks SPEND INTELLIGENCE block can't — the widget shows months
+ * of history, so the assistant should too.
+ */
+export function buildMonthlyBreakdownBlock(
+  expenses: ExpenseLite[],
+  monthsBack = 6,
+  now: Date = new Date(),
+): string {
+  if (!expenses || expenses.length === 0) return "";
+
+  const today = toIST(now);
+  const months: Array<{ key: string; label: string }> = [];
+  for (let i = 0; i < monthsBack; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    months.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: d.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+    });
+  }
+  const wanted = new Set(months.map((m) => m.key));
+
+  const agg: Record<string, { total: number; count: number; cats: Record<string, number> }> = {};
+  for (const e of expenses) {
+    const d = toIST(e.date);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!wanted.has(key)) continue;
+    if (!agg[key]) agg[key] = { total: 0, count: 0, cats: {} };
+    agg[key].total += e.amount;
+    agg[key].count += 1;
+    agg[key].cats[e.category] = (agg[key].cats[e.category] || 0) + e.amount;
+  }
+
+  const lines: string[] = [];
+  lines.push(
+    "MONTHLY BREAKDOWN — category totals + % weightage, newest first, IST (use this for any month-specific question, e.g. 'categorise June and give the percentage weightage'):",
+  );
+  for (const m of months) {
+    const a = agg[m.key];
+    if (!a || a.total === 0) {
+      lines.push(`  ${m.label}: no spend recorded`);
+      continue;
+    }
+    const cats = Object.entries(a.cats)
+      .sort((x, y) => y[1] - x[1])
+      .map(([c, v]) => `${c} ${Math.round((v / a.total) * 100)}% (${inr(v)})`)
+      .join(", ");
+    lines.push(
+      `  ${m.label}: ${inr(a.total)} across ${a.count} txn${a.count === 1 ? "" : "s"} — ${cats}`,
+    );
+  }
+  return lines.join("\n");
+}
