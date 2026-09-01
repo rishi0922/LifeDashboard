@@ -192,13 +192,15 @@ export function AIChatAssistant() {
         speak(data.content);
       }
 
-      // The assistant asked to open a news article the user confirmed.
-      // In voice mode there's no user gesture, so a new-tab popup is
-      // blocked — fall back to navigating the current tab so the article
-      // reliably opens either way.
+      // The assistant confirmed opening a news article. Try to pop a new
+      // tab automatically — but in voice mode there's no fresh user
+      // gesture, so the browser usually blocks it. We do NOT fall back to
+      // same-tab navigation (that would replace the dashboard). Instead the
+      // reply carries a clickable "Open article" link (data.openUrl is
+      // stored on the message and rendered below) which always opens a new
+      // tab when tapped.
       if (data.openUrl) {
-        const win = window.open(data.openUrl, "_blank", "noopener");
-        if (!win) window.location.href = data.openUrl;
+        window.open(data.openUrl, "_blank", "noopener");
       }
 
       // Notify other components if a mutation took place. We send the IST
@@ -427,6 +429,30 @@ export function AIChatAssistant() {
                 animation: 'fadeIn 0.3s ease forwards'
               }}>
                 <p style={{ fontSize: '0.9rem', margin: 0, whiteSpace: 'pre-wrap' }}>{msg.content}</p>
+                {/* Article link — always opens a new tab on tap (real user
+                    gesture), so it works even when the auto-popup was blocked. */}
+                {(msg as { openUrl?: string }).openUrl && (
+                  <a
+                    href={(msg as { openUrl?: string }).openUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.35rem',
+                      marginTop: '0.5rem',
+                      padding: '0.4rem 0.75rem',
+                      borderRadius: '0.6rem',
+                      background: 'var(--accent-color)',
+                      color: '#fff',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    🔗 Open article ↗
+                  </a>
+                )}
               </div>
             ))}
             {isLoading && (
