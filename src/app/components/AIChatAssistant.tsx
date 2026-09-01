@@ -95,27 +95,54 @@ export function AIChatAssistant() {
     }
   };
 
-  // Load history from LocalStorage on mount
+  // Conversation context window. History is retained while you're active,
+  // but a gap longer than this starts a fresh session — so stale context
+  // from hours/days ago can't muddle a new conversation (which is what made
+  // a follow-up "yes" look like a brand-new session).
+  const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+  // Load history from LocalStorage on mount — only if the last activity was
+  // within the TTL; otherwise begin fresh.
   useEffect(() => {
-    const saved = localStorage.getItem('chat_history');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setMessages(parsed);
-      messagesRef.current = parsed;
-    } else {
-      const initialMsgs = [
-        { role: 'assistant', content: 'Hi! I am your AI productivity assistant. Ask me to schedule a meeting, summarize tasks, or extract reminders from your notes!' }
-      ];
-      setMessages(initialMsgs);
-      messagesRef.current = initialMsgs;
+    const greeting = [
+      { role: 'assistant', content: 'Hi! I am your AI productivity assistant. Ask me to schedule a meeting, summarize tasks, or extract reminders from your notes!' }
+    ];
+    const startFresh = () => {
+      setMessages(greeting);
+      messagesRef.current = greeting;
+      try {
+        localStorage.removeItem('chat_history');
+        localStorage.removeItem('chat_history_ts');
+      } catch { /* ignore */ }
+    };
+
+    try {
+      const saved = localStorage.getItem('chat_history');
+      const tsRaw = localStorage.getItem('chat_history_ts');
+      const ts = tsRaw ? parseInt(tsRaw, 10) : 0;
+      const withinWindow = ts && Date.now() - ts < SESSION_TTL_MS;
+      if (saved && withinWindow) {
+        const parsed = JSON.parse(saved);
+        setMessages(parsed);
+        messagesRef.current = parsed;
+      } else {
+        startFresh();
+      }
+    } catch {
+      startFresh();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     messagesRef.current = messages;
-    // Save to LocalStorage whenever messages change
+    // Persist history + a fresh activity timestamp so the TTL window tracks
+    // real activity, not just first load.
     if (messages.length > 0) {
-      localStorage.setItem('chat_history', JSON.stringify(messages));
+      try {
+        localStorage.setItem('chat_history', JSON.stringify(messages));
+        localStorage.setItem('chat_history_ts', String(Date.now()));
+      } catch { /* quota / private mode — non-fatal */ }
     }
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

@@ -265,7 +265,8 @@ ${newsFeedContext ? `      --- NEWS INTELLIGENCE ---
       - The NEWS FEED block under CONTEXT lists the user's current news items with titles, sources, descriptions, and URLs.
       - When the user asks about news, a headline, or a topic (tech, finance, F1/Formula 1, cricket/IPL, policy, etc.), find the most relevant item(s) and give a SHORT paragraph summary — 3 to 4 sentences, in your own words, grounded in the title and description. Don't fabricate details beyond what's given.
       - After the summary, ALWAYS end by asking: "Want me to open the full article?"
-      - If the user then confirms (yes / open it / sure / go ahead), emit an open_article action with the EXACT URL from the NEWS FEED for the item you just summarised. If several items matched, summarise the single best one and note that more are available.
+      - If the user then confirms (yes / open it / sure / go ahead / ok / yeah), emit an open_article action with the EXACT URL from the NEWS FEED for the item you just summarised. If several items matched, summarise the single best one and note that more are available.
+      - FOLLOW-UP CONTINUITY: A short reply like "yes", "open it", "sure" is NOT a new request — it answers YOUR previous question. Look at the last assistant message in HISTORY: if it summarised an article and asked to open it, find that same article's title in the NEWS FEED and emit open_article with its URL. Never respond as if the conversation just started.
       - This is the one news action: summarise as prose first, open only on confirmation.
 ` : ``}${gmailContext ? `      --- GMAIL INTELLIGENCE (the user asked about email this turn) ---
       The GMAIL block under CONTEXT has the latest unread snippets. Identify actionable tasks (deadlines, invoices, meeting requests). For each, ASK the user before adding as a task. Always include the Gmail Message ID as "sourceId" for dedup.
