@@ -8,6 +8,23 @@ import { fetchGmailSnippets, sendGmailReply, sendGmailNew } from "@/lib/gmail";
 import { ZomatoBridge } from "@/lib/zomato";
 import { buildSpendIntelligenceBlock, buildMonthlyBreakdownBlock } from "@/lib/spendAnalytics";
 import { calendarEventId } from "@/lib/dedup";
+import { retrieveSimilar, type MemoryHit } from "@/lib/memory";
+
+/**
+ * Gate RAG retrieval to turns that actually benefit — recall / questions /
+ * conversation — and skip pure commands ("create event at 4pm"). Kept loose
+ * on purpose: retrieval runs in parallel so a false-positive costs ~nothing.
+ */
+function shouldRetrieveMemory(msg: string): boolean {
+  if (!msg) return false;
+  const m = msg.toLowerCase().trim();
+  const recallSignal =
+    m.includes("?") ||
+    /\b(remember|recall|earlier|previously|last (week|month|time|year)|my notes?|i (said|noted|mentioned|wrote|planned|decided)|what (did|was|were|about)|when (did|is|was)|did i|have i|had i|tell me about|summar|remind me what)\b/.test(m);
+  if (recallSignal) return true;
+  const isCommand = /^(create|add|schedule|remind|set up|set a|delete|remove|update|mark|order|send|reply|open|play|turn on|turn off)\b/.test(m);
+  return !isCommand; // default: allow recall on conversational turns
+}
 
 export const dynamic = "force-dynamic";
 // Gmail reply + Gemini + calendar context + Gmail list-snippets can total
@@ -64,6 +81,15 @@ export async function POST(req: Request) {
         name: session?.user?.name || userEmail.split('@')[0],
       },
     });
+
+    // Kick off RAG memory retrieval NOW (not awaited yet) so it runs
+    // concurrently with the calendar/tasks/expenses/news building below —
+    // it overlaps the slowest existing fetch and adds ~0 wall-clock. Gated
+    // so pure command turns don't spend an embedding call or add noise.
+    const isRecallTurn = shouldRetrieveMemory(latestMessage);
+    const memoryPromise: Promise<MemoryHit[]> = isRecallTurn
+      ? retrieveSimilar(activeUser.id, latestMessage, 4)
+      : Promise.resolve([]);
 
     // 1. Fetch Context (Optimized)
     const istNow = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
@@ -218,6 +244,19 @@ export async function POST(req: Request) {
       ? `      - GMAIL: ${gmailContext}\n`
       : "";
 
+    // Await the RAG retrieval we kicked off earlier (it ran in parallel
+    // with the context building above). Build a compact RELEVANT MEMORY
+    // block only if there were confident hits.
+    const memoryHits = await memoryPromise;
+    const memoryContext = memoryHits.length
+      ? `RELEVANT MEMORY — recalled from the user's OWN past notes (use ONLY if it genuinely helps answer this message; otherwise ignore it; never invent details):\n${memoryHits
+          .map((h, i) => `[${i + 1}] ${h.content.slice(0, 500)}`)
+          .join("\n")}`
+      : isRecallTurn
+        ? `MEMORY LOOKUP: The user is asking to recall something, and a fresh search of their notes/memory found NOTHING relevant. Do NOT invent a note or repeat one from earlier in this conversation — a note mentioned earlier may since have been deleted. Tell the user you don't have any matching notes.`
+        : "";
+    const memoryContextLine = memoryContext ? `      - ${memoryContext}\n` : "";
+
     const prompt = `
       You are "Command Center AI". Respond clearly and concisely.
 
@@ -244,7 +283,7 @@ export async function POST(req: Request) {
       - CALENDAR: ${calendarContext}
       - TASKS: ${taskContext}
 ${gmailContextLine}      - EXPENSES: ${expenseContext}
-${newsFeedContext ? `      - ${newsFeedContext}\n` : ""}      - HISTORY: The recent interaction history (last 10 turns max — older turns are intentionally dropped to keep prompt size bounded). Use it for context.
+${newsFeedContext ? `      - ${newsFeedContext}\n` : ""}${memoryContextLine}      - HISTORY: The recent interaction history (last 10 turns max — older turns are intentionally dropped to keep prompt size bounded). Use it for context.
       ${JSON.stringify(messages.slice(0, -1).slice(-10))}
       
       CAPABILITIES (Output JSON for actions):

@@ -23,6 +23,26 @@ model User {
   preferences     UserPreference[]
   expenses        Expense[]
   processedEmails ProcessedEmail[]
+  memoryChunks    MemoryChunk[]
+}
+
+/// RAG memory store. The `embedding` column is a pgvector `vector(768)`
+/// type Prisma can't model natively, so it's declared Unsupported and all
+/// reads/writes go through raw SQL in src/lib/memory.ts. The table + HNSW
+/// index are created by scratch/setup_pgvector.ts, NOT by `prisma db push`
+/// — this model exists so push won't try to drop the table.
+model MemoryChunk {
+  id        String                       @id @default(cuid())
+  userId    String
+  source    String // "note" | "chat"
+  sourceId  String?
+  content   String
+  embedding Unsupported("vector(768)")?
+  createdAt DateTime                     @default(now())
+  user      User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([source, sourceId])
 }
 
 model Task {

@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateContentWithFallback } from "@/lib/gemini";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/sessionUser";
+import { storeMemory, deleteMemory } from "@/lib/memory";
 
 /**
  * Extract the outermost JSON OBJECT from a model reply. We can't reuse
@@ -147,6 +148,15 @@ RAW INPUT:
     },
   });
 
+  // Index the note into the RAG memory layer so it's recallable later.
+  // Awaited (not fire-and-forget) because serverless may freeze the
+  // function after the response returns; storeMemory never throws, so a
+  // failed embed won't break capture — the note is already saved.
+  const memoryText = [structured.title, structured.summary, structured.content]
+    .filter(Boolean)
+    .join(". ");
+  await storeMemory({ userId: user.id, source: "note", sourceId: note.id, content: memoryText });
+
   return NextResponse.json({ note });
 }
 
@@ -164,5 +174,7 @@ export async function DELETE(req: Request) {
 
   // Scope the delete to the owner so one user can't delete another's note.
   await prisma.note.deleteMany({ where: { id: body.id, userId: user.id } });
+  // Keep the memory layer in sync so deleted notes stop surfacing in recall.
+  await deleteMemory({ userId: user.id, source: "note", sourceId: body.id });
   return NextResponse.json({ success: true });
 }
